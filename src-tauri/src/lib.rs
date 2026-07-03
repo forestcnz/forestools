@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Manager,
+};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[derive(Serialize, Deserialize)]
@@ -64,6 +68,29 @@ pub fn run() {
                         }
                     }
                 });
+            }
+
+            if let (Ok(quit), Some(icon)) = (
+                MenuItem::with_id(app, "quit", "退出", true, None::<&str>),
+                app.default_window_icon(),
+            ) {
+                if let Ok(menu) = Menu::with_items(app, &[&quit]) {
+                    let _ = TrayIconBuilder::new()
+                        .icon(icon.clone())
+                        .menu(&menu)
+                        .on_menu_event(|app, event| {
+                            if event.id.as_ref() == "quit" {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    if let Ok(pos) = window.outer_position() {
+                                        save_position(app, pos.x, pos.y);
+                                    }
+                                    let _ = window.close();
+                                }
+                                app.exit(0);
+                            }
+                        })
+                        .build(app);
+                }
             }
 
             if let Err(e) =
