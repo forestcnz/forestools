@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZTools 插件系统 — 调研报告</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --card: #fff;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --border: #e0e0e0;
+  --accent: #0071e3;
+  --code-bg: #f0f0f2;
+  --tag-fg: #fff;
+  --tag-bg: #0071e3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d1d1f;
+    --card: #2a2a2c;
+    --text: #f5f5f7;
+    --muted: #98989d;
+    --border: #3a3a3c;
+    --accent: #64a8ff;
+    --code-bg: #2e2e32;
+    --tag-bg: #0051a2;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 40px 20px;
+}
+.wrap { max-width: 960px; margin: 0 auto; }
+
+h1 { font-size: 2em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: .3em; }
+h1 small { font-size: .5em; font-weight: 400; color: var(--muted); display: block; margin-top: 4px; }
+.meta { color: var(--muted); font-size: .9em; margin-bottom: 2.5em; display: flex; gap: 1em; flex-wrap: wrap; }
+.meta span { background: var(--card); padding: 2px 12px; border-radius: 20px; border: 1px solid var(--border); }
+
+h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 2em 0 .8em;
+  padding-bottom: .35em;
+  border-bottom: 2px solid var(--border);
+}
+h3 { font-size: 1.1em; font-weight: 600; margin: 1.5em 0 .5em; }
+h4 { font-weight: 600; margin: 1em 0 .3em; color: var(--muted); }
+
+p, li { color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+
+code {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: .88em;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: .85em;
+  line-height: 1.5;
+  margin: .8em 0;
+}
+
+.tag {
+  display: inline-block;
+  font-size: .75em;
+  font-weight: 500;
+  color: var(--tag-fg);
+  background: var(--tag-bg);
+  padding: 1px 10px;
+  border-radius: 12px;
+  margin-right: 4px;
+}
+.tag.green { background: #34c759; }
+.tag.orange { background: #ff9f0a; }
+.tag.purple { background: #af52de; }
+.tag.red { background: #ff3b30; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: .8em 0;
+  font-size: .92em;
+}
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+th { font-weight: 600; background: var(--code-bg); }
+
+.toc a { display: block; padding: 4px 0; color: var(--muted); font-size: .9em; }
+.toc a:hover { color: var(--accent); }
+.toc .l2 { padding-left: 1.2em; font-size: .85em; }
+.toc .l3 { padding-left: 2.4em; font-size: .82em; }
+
+.flow-box {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: .5em 0;
+}
+.flow-step {
+  background: var(--code-bg);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: .88em;
+  white-space: nowrap;
+}
+.flow-step::after { content: " →"; color: var(--muted); margin-left: 4px; }
+.flow-step:last-child::after { content: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>ZTools 插件系统<small>功能调研报告</small></h1>
+<div class="meta">
+  <span>Electron 41 + Vue 3 + TS</span>
+  <span>WebContentsView 架构</span>
+  <span>LMDB 命名空间隔离</span>
+  <span>双 Preload 体系</span>
+</div>
+
+<aside>
+<h2>目录</h2>
+<div class="toc">
+  <a href="#overview">一、概览</a>
+  <a href="#structure" class="l2">二、项目结构</a>
+  <a href="#lifecycle" class="l2">三、插件生命周期</a>
+  <a href="#types" class="l2">四、插件类型</a>
+  <a href="#types-ui" class="l3">4.1 UI 插件</a>
+  <a href="#types-headless" class="l3">4.2 无界面插件</a>
+  <a href="#types-builtin" class="l3">4.3 内置插件</a>
+  <a href="#types-dev" class="l3">4.4 开发版插件</a>
+  <a href="#manifest" class="l2">五、plugin.json 清单</a>
+  <a href="#api" class="l2">六、插件 API 体系</a>
+  <a href="#api-preload" class="l3">6.1 双 Preload 架构</a>
+  <a href="#api-list" class="l3">6.2 window.ztools API 一览</a>
+  <a href="#api-dispatch" class="l3">6.3 API 分发器机制</a>
+  <a href="#ipc" class="l2">七、通信机制</a>
+  <a href="#market" class="l2">八、插件市场</a>
+  <a href="#isolation" class="l2">九、数据隔离</a>
+  <a href="#cli" class="l2">十、CLI 工具</a>
+  <a href="#security" class="l2">十一、安全沙箱</a>
+  <a href="#devflow" class="l2">十二、开发流程</a>
+  <a href="#files" class="l2">十三、关键代码文件</a>
+</div>
+</aside>
+
+<section id="overview">
+<h2>一、概览</h2>
+<div class="card">
+<p>ZTools 是一个基于 <strong>Electron 41 + Vue 3 + TypeScript + LMDB</strong> 的跨平台应用启动器和插件平台，类似 uTools / Raycast / Alfred 的开源实现。</p>
+<p>插件系统是其核心能力，支持<strong>UI 插件</strong>（有界面）和<strong>无界面插件</strong>（后台运行）两种形态，提供从开发到分发的完整工具链。</p>
+<p><span class="tag">ztools-api-types</span> 子模块提供 TypeScript 类型定义（NPM 发布），<span class="tag">ztools-plugin-cli</span> 子模块提供脚手架与发布 CLI。</p>
+</div>
+</section>
+
+<section id="structure">
+<h2>二、项目结构（插件相关）</h2>
+<div class="card">
+<pre>
+ztools/
+├── src/main/
+│   ├── managers/
+│   │   ├── pluginManager.ts            # 插件 WebContentsView 生命周期管理（1882 行）
+│   │   └── pluginAssemblyCoordinator.ts # 装配会话状态机
+│   ├── api/
+│   │   ├── index.ts                    # API 管理器入口
+│   │   ├── plugin/                     # 插件 API（注入第三方插件的 window.ztools）
+│   │   │   ├── pluginApiDispatcher.ts  # 统一 API 分发器（注册表模式）
+│   │   │   ├── lifecycle.ts            # onPluginEnter/Leave
+│   │   │   ├── ui.ts                   # setExpendHeight / subInput
+│   │   │   ├── window.ts               # createBrowserWindow
+│   │   │   ├── dialog.ts               # 对话框
+│   │   │   ├── clipboard.ts            # 剪贴板
+│   │   │   ├── input.ts                # 输入模拟
+│   │   │   ├── shell.ts                # Shell 执行
+│   │   │   ├── feature.ts              # 动态功能注册
+│   │   │   ├── device.ts               # 设备信息
+│   │   │   ├── http.ts                 # HTTP 请求
+│   │   │   ├── redirect.ts             # 搜索重定向
+│   │   │   ├── screen.ts               # 截图取色
+│   │   │   ├── toast.ts                # Toast 通知
+│   │   │   ├── tools.ts                # MCP 工具声明
+│   │   │   ├── providers.ts            # Provider 调用
+│   │   │   ├── ai.ts                   # AI 对话（流式）
+│   │   │   ├── zbrowser.ts             # 浏览器自动化
+│   │   │   ├── ffmpeg.ts               # FFmpeg 路径
+│   │   │   └── internal.ts             # 内置插件专属 API
+│   │   └── renderer/
+│   │       ├── plugins.ts              # 插件安装/删除/市场（1761 行）
+│   │       ├── pluginMarket.ts         # 插件市场逻辑
+│   │       ├── pluginInstaller.ts      # 安装器
+│   │       └── pluginDevProjects.ts    # 开发项目管理
+│   ├── core/
+│   │   ├── internalPlugins.ts          # 内置插件列表
+│   │   ├── internalPluginLoader.ts     # 内置插件加载器
+│   │   ├── internalPluginServer.ts     # 内置插件开发服务器
+│   │   ├── detachedWindowManager.ts    # 分离窗口管理
+│   │   └── pluginWindowManager.ts      # 插件子窗口管理
+│   └── utils/
+│       └── zpxArchive.ts               # ZPX 打包/解压
+├── resources/
+│   └── preload.js                      # 插件 preload（~1300 行）
+├── internal-plugins/
+│   ├── setting/                        # 设置中心（Vue + Vite + UnoCSS）
+│   └── system/                         # 系统工具（无界面）
+├── shared/
+│   └── pluginRuntimeNamespace.ts       # 数据隔离命名空间
+├── ztools-api-types/                   # 子模块：类型定义
+│   ├── index.d.ts / ztools.api.d.ts
+│   └── resource/ztools.schema.json     # plugin.json Schema
+└── ztools-plugin-cli/                  # 子模块：CLI 工具
+    ├── src/
+    └── templates/                      # 脚手架模板
+</pre>
+</div>
+</section>
+
+<section id="lifecycle">
+<h2>三、插件生命周期</h2>
+<div class="card">
+<p>由 <code>pluginManager.ts</code> + <code>pluginAssemblyCoordinator.ts</code> + <code>resources/preload.js</code> 三方协作完成。</p>
+
+<h4>装配状态机</h4>
+<p>状态路径：<code>idle → assembling → domReady → readyToDisplay → displayed → aborted</code></p>
+
+<h4>详细流程</h4>
+<div class="flow-box">
+  <span class="flow-step">搜索到插件指令</span>
+  <span class="flow-step">beginAssembly</span>
+  <span class="flow-step">createPluginView</span>
+  <span class="flow-step">读 plugin.json</span>
+  <span class="flow-step">创建隔离 Session</span>
+  <span class="flow-step">创建 WebContentsView</span>
+  <span class="flow-step">注册 preload + loadURL</span>
+  <span class="flow-step">dom-ready</span>
+  <span class="flow-step">processPluginMode</span>
+  <span class="flow-step">派发 PluginEnter</span>
+  <span class="flow-step">用户交互</span>
+  <span class="flow-step">派发 PluginOut 或 kill</span>
+</div>
+
+<h4>关键设计</h4>
+<ul>
+  <li><strong>粘性进入事件缓存</strong>（<code>pendingEnterPayload</code>）：如果 <code>onPluginEnter</code> 还没注册就已收到进入事件，缓存 payload 等待回调注册后回放</li>
+  <li><strong>事件串行化</strong>：<code>lifecycleChains</code> Map 按 webContents id 串行化，防止 PluginOut / PluginEnter 交错</li>
+  <li><strong>重入防抖</strong>（<code>shouldSkipReEnter</code>）：同一插件、同一指令、同一文本的连续进入直接跳过</li>
+</ul>
+</div>
+</section>
+
+<section id="types">
+<h2>四、插件类型</h2>
+
+<h3 id="types-ui">4.1 UI 插件</h3>
+<div class="card">
+<p><code>plugin.json</code> 包含 <code>main</code> 字段，指向 HTML 入口。ZTools 创建 <code>WebContentsView</code> 加载该 URL，通过 <code>window.ztools</code> 调用 API。</p>
+<ul>
+  <li>可设置子输入框（<code>setSubInput</code>）</li>
+  <li>可调整自身高度（<code>setExpendHeight</code>）</li>
+  <li>支持 list 模式（搜索结果列表在插件内部渲染）</li>
+  <li>支持 mainHide 模式（不弹出主窗口）</li>
+  <li>可分离为独立窗口</li>
+</ul>
+<p>示例：<code>internal-plugins/setting/</code>（Vue 3 + Vite + UnoCSS）</p>
+</div>
+
+<h3 id="types-headless">4.2 无界面插件（Headless）</h3>
+<div class="card">
+<p><code>plugin.json</code> <strong>没有</strong> <code>main</code> 字段。加载隐藏空白 HTML，通过 <code>preload.js</code> 的 <code>window.exports</code> 机制执行：</p>
+<pre>window.exports = {
+  process: {
+    mode: 'none',
+    args: {
+      enter: async (action) => {
+        // 处理逻辑，无 UI
+      }
+    }
+  }
+}</pre>
+<p>示例：<code>internal-plugins/system/</code>（系统指令：关机、重启、截图等）</p>
+</div>
+
+<h3 id="types-builtin">4.3 内置插件</h3>
+<div class="card">
+<p>存放在 <code>internal-plugins/</code> 目录，定义在 <code>internalPlugins.ts</code>：</p>
+<pre>export const BUNDLED_INTERNAL_PLUGIN_NAMES = ['setting', 'system']</pre>
+<ul>
+  <li><span class="tag green">特点</span> 不经过市场安装/卸载流程</li>
+  <li><span class="tag green">特点</span> 有更高 API 权限（<code>window.ztools.internal</code> 命名空间）</li>
+  <li><span class="tag green">特点</span> 生产环境使用本地 HTTP server 加载（绕过 <code>file://</code> CSP 限制）</li>
+  <li><span class="tag green">特点</span> 不可被禁用</li>
+</ul>
+</div>
+
+<h3 id="types-dev">4.4 开发版插件</h3>
+<div class="card">
+<p>开发版插件名自动追加 <code>__dev</code> 后缀（定义在 <code>pluginRuntimeNamespace.ts</code>）：</p>
+<pre>export const DEV_PLUGIN_SUFFIX = '__dev'</pre>
+<p>在数据库命名空间、Session 隔离等所有层面与安装版完全独立，可同时存在。</p>
+</div>
+</section>
+
+<section id="manifest">
+<h2>五、plugin.json 清单</h2>
+<div class="card">
+<p>完整 JSON Schema 定义在 <code>ztools-api-types/resource/ztools.schema.json</code>。</p>
+
+<table>
+<tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>string</td><td><strong>是</strong></td><td>插件唯一标识</td></tr>
+<tr><td><code>version</code></td><td>string</td><td><strong>是</strong></td><td>语义化版本号</td></tr>
+<tr><td><code>title</code></td><td>string</td><td>否</td><td>展示标题</td></tr>
+<tr><td><code>description</code></td><td>string</td><td>否</td><td>插件描述</td></tr>
+<tr><td><code>author</code></td><td>string</td><td>否</td><td>作者</td></tr>
+<tr><td><code>logo</code></td><td>string</td><td>否</td><td>图标路径</td></tr>
+<tr><td><code>main</code></td><td>string</td><td>条件</td><td>HTML 入口；缺省 = 无界面</td></tr>
+<tr><td><code>preload</code></td><td>string</td><td>条件</td><td>自定义 preload</td></tr>
+<tr><td><code>development.main</code></td><td>string</td><td>否</td><td>开发模式 URL（如 <code>http://localhost:5177</code>）</td></tr>
+<tr><td><code>pluginSetting.single</code></td><td>boolean</td><td>否</td><td>是否不可多开（默认 true）</td></tr>
+<tr><td><code>pluginSetting.height</code></td><td>number</td><td>否</td><td>插件默认高度</td></tr>
+<tr><td><code>pluginSetting.backgroundRunning</code></td><td>boolean</td><td>否</td><td>后台保持运行（默认 false）</td></tr>
+</table>
+
+<h4>features[]</h4>
+<table>
+<tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>code</code></td><td>string</td><td><strong>是</strong></td><td>功能唯一标识</td></tr>
+<tr><td><code>explain</code></td><td>string</td><td>否</td><td>功能说明</td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>否</td><td>功能图标</td></tr>
+<tr><td><code>mainHide</code></td><td>boolean</td><td>否</td><td>true=打开时不弹主窗口</td></tr>
+<tr><td><code>mainPush</code></td><td>boolean</td><td>否</td><td>true=启用主搜索推送</td></tr>
+<tr><td><code>cmds[]</code></td><td>array</td><td><strong>是</strong></td><td>命令列表（6 种类型）</td></tr>
+</table>
+
+<h4>cmds[] 支持的 6 种类型</h4>
+<table>
+<tr><th>类型</th><th>格式示例</th><th>说明</th></tr>
+<tr><td>字符串</td><td><code>"搜索"</code></td><td>文本匹配，支持拼音</td></tr>
+<tr><td>regex</td><td><code>{ type:"regex", match:"/pattern/", label:"正则" }</code></td><td>正则匹配</td></tr>
+<tr><td>over</td><td><code>{ type:"over", label:"覆盖" }</code></td><td>匹配任意输入</td></tr>
+<tr><td>img</td><td><code>{ type:"img", label:"图片" }</code></td><td>匹配粘贴的图片</td></tr>
+<tr><td>files</td><td><code>{ type:"files", label:"文件", fileType:"file" }</code></td><td>匹配本地文件</td></tr>
+<tr><td>window</td><td><code>{ type:"window", label:"窗口", match:{ app:[] } }</code></td><td>匹配活动窗口</td></tr>
+</table>
+
+<p><span class="tag orange">注意</span> <code>features</code> 和 <code>tools</code>（MCP）不能同时为空。</p>
+</div>
+</section>
+
+<section id="api">
+<h2>六、插件 API 体系</h2>
+
+<h3 id="api-preload">6.1 双 Preload 架构</h3>
+<div class="card">
+<table>
+<tr><th>特性</th><th>主程序渲染进程</th><th>插件（第三方 + 内置）</th></tr>
+<tr><td>Preload 文件</td><td><code>src/preload/index.ts</code></td><td><code>resources/preload.js</code></td></tr>
+<tr><td>构建方式</td><td>Vite 构建</td><td>原生 JS，不经过 Vite</td></tr>
+<tr><td>注入方式</td><td>contextBridge</td><td>直接挂载 <code>window.ztools</code></td></tr>
+<tr><td>类型声明</td><td><code>env.d.ts</code></td><td><code>ztools-api-types</code>（NPM）</td></tr>
+</table>
+</div>
+
+<h3 id="api-list">6.2 window.ztools API 一览</h3>
+<div class="card">
+<table>
+<tr><th>分类</th><th>方法</th></tr>
+<tr><td><strong>生命周期</strong></td><td><code>onPluginEnter()</code>、<code>onPluginReady()</code>、<code>onPluginOut()</code>、<code>onPluginDetach()</code></td></tr>
+<tr><td><strong>数据库</strong></td><td><code>db.put/get/remove/bulkDocs/allDocs</code>、<code>dbStorage.setItem/getItem/removeItem</code></td></tr>
+<tr><td><strong>UI 控制</strong></td><td><code>setExpendHeight()</code>、<code>setSubInput()</code>、<code>removeSubInput()</code></td></tr>
+<tr><td><strong>窗口控制</strong></td><td><code>showMainWindow()</code>、<code>hideMainWindow()</code>、<code>outPlugin()</code></td></tr>
+<tr><td><strong>通知</strong></td><td><code>showNotification()</code>、<code>showToast()</code></td></tr>
+<tr><td><strong>剪贴板</strong></td><td><code>clipboard.getHistory()</code>、<code>clipboard.write()</code>、<code>clipboard.onChange()</code></td></tr>
+<tr><td><strong>系统</strong></td><td><code>getPath()</code>、<code>shellOpenExternal()</code>、<code>shellOpenPath()</code></td></tr>
+<tr><td><strong>对话框</strong></td><td><code>showOpenDialog()</code>、<code>showSaveDialog()</code></td></tr>
+<tr><td><strong>屏幕</strong></td><td><code>screenCapture()</code>、<code>screenColorPick()</code></td></tr>
+<tr><td><strong>输入模拟</strong></td><td><code>simulateKeyboardTap()</code>、<code>simulateMouseClick()</code>、<code>simulateMouseMove()</code></td></tr>
+<tr><td><strong>窗口管理</strong></td><td><code>createBrowserWindow()</code>、<code>sendToParent()</code></td></tr>
+<tr><td><strong>显示信息</strong></td><td><code>getPrimaryDisplay()</code>、<code>getAllDisplays()</code>、<code>getCursorScreenPoint()</code></td></tr>
+<tr><td><strong>平台检测</strong></td><td><code>isMacOS()</code>、<code>isWindows()</code>、<code>isLinux()</code></td></tr>
+<tr><td><strong>动态功能</strong></td><td><code>getFeatures()</code>、<code>setFeature()</code>、<code>removeFeature()</code></td></tr>
+<tr><td><strong>跳转</strong></td><td><code>redirect()</code>、<code>redirectHotKeySetting()</code></td></tr>
+<tr><td><strong>浏览器自动化</strong></td><td><code>zbrowser.goto().click().input().run()</code></td></tr>
+<tr><td><strong>AI</strong></td><td><code>ai(options, streamCallback?)</code>、<code>allAiModels()</code></td></tr>
+<tr><td><strong>MCP 工具</strong></td><td><code>registerTool()</code>、<code>registerProvider()</code></td></tr>
+<tr><td><strong>Provider</strong></td><td><code>providers.getProviders()</code>、<code>invokeProvider()</code>、<code>translate()</code>、<code>ocr()</code></td></tr>
+<tr><td><strong>主题</strong></td><td><code>getThemeInfo()</code>、<code>onThemeChange()</code>、<code>isDarkColors()</code></td></tr>
+<tr><td><strong>页面查找</strong></td><td><code>findInPage()</code>、<code>stopFindInPage()</code></td></tr>
+<tr><td><strong>MainPush</strong></td><td><code>onMainPush(callback, selectCallback)</code></td></tr>
+<tr><td><strong>内置专属</strong></td><td><code>internal.dbPut/dbGet</code>、<code>internal.getPlugins()</code></td></tr>
+</table>
+</div>
+
+<h3 id="api-dispatch">6.3 API 分发器机制</h3>
+<div class="card">
+<p>通过 <code>pluginApiDispatcher.ts</code> 统一注册，支持三种 IPC 模式：</p>
+<ul>
+  <li><strong>同步</strong>：插件端用 <code>ipcSendSync</code> 调用，主进程 <code>event.returnValue</code></li>
+  <li><strong>异步</strong>：插件端用 <code>ipcInvoke</code> 调用，主进程返回 Promise</li>
+  <li><strong>推送</strong>：插件端用 <code>ipcSend</code> 调用（单向）</li>
+</ul>
+</div>
+</section>
+
+<section id="ipc">
+<h2>七、通信机制</h2>
+<div class="card">
+<pre>
+第三方插件 WebContents
+  ↓ window.ztools.xxx()
+resources/preload.js（插件 preload）
+  ↓ ipcRenderer.invoke/send/sendSync('plugin.api', apiName, args)
+pluginApiDispatcher.ts（统一分发）
+  ↓ 查找注册表
+src/main/api/plugin/xxx.ts（具体实现）
+  ↓
+Electron 主进程
+</pre>
+
+<h4>主进程 → 插件事件</h4>
+<table>
+<tr><th>通道</th><th>时机</th></tr>
+<tr><td><code>on-plugin-enter</code></td><td>插件被选中进入</td></tr>
+<tr><td><code>plugin-out</code></td><td>插件退出</td></tr>
+<tr><td><code>plugin-detach</code></td><td>插件分离为独立窗口</td></tr>
+<tr><td><code>plugin-ready</code></td><td>插件就绪</td></tr>
+<tr><td><code>update-theme-info</code></td><td>主题变更推送</td></tr>
+<tr><td><code>clipboard-change</code></td><td>剪贴板变化</td></tr>
+<tr><td><code>main-push-query</code></td><td>MainPush 搜索查询</td></tr>
+</table>
+
+<h4>懒注册监听</h4>
+<p>preload.js 的 <code>lazyListen</code> 模式：IPC 监听器在插件注册回调后才挂载，避免无效通信。</p>
+</div>
+</section>
+
+<section id="market">
+<h2>八、插件市场</h2>
+<div class="card">
+<pre>
+远程源（GitHub Releases）
+  ├── plugins.json      → 全量插件列表
+  ├── latest            → 最新版本号
+  ├── layout.yaml       → 首页布局
+  └── categories.json   → 分类定义
+       ↓
+fetchPluginMarket()
+  ├── 版本号对比 → 决定是否更新缓存
+  ├── 构建 storefront
+  └── 缓存到 LMDB
+       ↓
+设置页面 → 渲染市场 UI
+</pre>
+
+<h4>安装流程</h4>
+<div class="flow-box">
+  <span class="flow-step">用户点安装</span>
+  <span class="flow-step">下载 .zpx 文件</span>
+  <span class="flow-step">extractZpx 解压</span>
+  <span class="flow-step">校验 plugin.json</span>
+  <span class="flow-step">写入 LMDB</span>
+  <span class="flow-step">通知刷新</span>
+</div>
+
+<h4>ZPX 包格式</h4>
+<p><code>gzip(asar archive)</code> 或 <code>brotli(asar archive)</code>，实现在 <code>zpxArchive.ts</code>。</p>
+
+<h4>升级策略</h4>
+<ul>
+  <li>语义化版本号对比</li>
+  <li>先卸载旧版本，再安装新版本</li>
+  <li>升级时保留插件数据（<code>deleteData: false</code>）</li>
+</ul>
+</div>
+</section>
+
+<section id="isolation">
+<h2>九、数据隔离</h2>
+<div class="card">
+
+<h4>LMDB 命名空间</h4>
+<pre>ZTOOLS/               → 主程序数据
+PLUGIN/{name}/        → 插件数据（含 __dev 后缀则完全隔离）
+SYNC/                 → 同步数据</pre>
+
+<h4>Session 隔离</h4>
+<pre>persist:{pluginName}  → 插件主视图 Session
+{pluginName}.zbrowser → zbrowser 专用 Session</pre>
+
+<h4>隔离层级</h4>
+<ul>
+  <li><strong>数据库前缀</strong>：<code>PLUGIN/my-plugin/</code> vs <code>PLUGIN/my-plugin__dev/</code></li>
+  <li><strong>Session partition</strong>：<code>persist:my-plugin</code> vs <code>persist:my-plugin__dev</code></li>
+  <li><strong>窗口尺寸存储</strong>：独立键名</li>
+  <li><strong>数据清理</strong>：删除插件时默认清除全部数据，可保留供重新安装</li>
+</ul>
+</div>
+</section>
+
+<section id="cli">
+<h2>十、CLI 工具</h2>
+<div class="card">
+<p><code>@ztools-center/plugin-cli</code> NPM 包：</p>
+
+<table>
+<tr><th>命令</th><th>功能</th></tr>
+<tr><td><code>ztools create &lt;name&gt;</code></td><td>交互式创建脚手架（Vue / React / Preload 模板）</td></tr>
+<tr><td><code>ztools publish</code></td><td>发布到中心仓库（GitHub OAuth → Fork → PR）</td></tr>
+</table>
+</div>
+</section>
+
+<section id="security">
+<h2>十一、安全沙箱</h2>
+<div class="card">
+
+<table>
+<tr><th>机制</th><th>实现</th></tr>
+<tr><td>外部链接拦截</td><td><code>will-navigate</code> + <code>setWindowOpenHandler</code> 阻止跨域导航，转系统浏览器</td></tr>
+<tr><td>窗口创建校验</td><td><code>createBrowserWindow</code> 的 URL 必须是 <code>file://</code>，拒绝 HTTP</td></tr>
+<tr><td>子窗口所有权</td><td>严格校验调用者插件名与窗口所有者匹配，拒绝跨插件访问</td></tr>
+<tr><td>Session 代理隔离</td><td>各插件 Session 独立应用代理配置</td></tr>
+<tr><td>内置 API 保护</td><td><code>INTERNAL_API_PLUGIN_NAMES</code> 白名单控制 <code>window.ztools.internal</code></td></tr>
+<tr><td>禁用机制</td><td>禁用时立即 kill 插件进程，持久化到 LMDB</td></tr>
+</table>
+</div>
+</section>
+
+<section id="devflow">
+<h2>十二、开发流程</h2>
+<div class="card">
+<div class="flow-box">
+  <span class="flow-step">ztools create my-plugin</span>
+  <span class="flow-step">选择模板</span>
+  <span class="flow-step">编写 plugin.json + preload</span>
+  <span class="flow-step">ZTools 设置添加开发中插件</span>
+  <span class="flow-step">热重载开发</span>
+  <span class="flow-step">ztools publish 发布</span>
+</div>
+
+<ul>
+  <li>开发版自动追加 <code>__dev</code> 后缀，数据完全隔离</li>
+  <li>可同时安装同一插件的开发版和正式版</li>
+  <li>内置 <code>ztools-developer-plugin</code> 用于调试</li>
+</ul>
+</div>
+</section>
+
+<section id="files">
+<h2>十三、关键代码文件</h2>
+<div class="card">
+
+<table>
+<tr><th>功能</th><th>文件路径</th></tr>
+<tr><td>插件生命周期管理</td><td><code>src/main/managers/pluginManager.ts</code></td></tr>
+<tr><td>装配状态机</td><td><code>src/main/managers/pluginAssemblyCoordinator.ts</code></td></tr>
+<tr><td>API 分发器</td><td><code>src/main/api/plugin/pluginApiDispatcher.ts</code></td></tr>
+<tr><td>插件 Preload</td><td><code>resources/preload.js</code></td></tr>
+<tr><td>插件安装/删除</td><td><code>src/main/api/renderer/plugins.ts</code></td></tr>
+<tr><td>插件市场</td><td><code>src/main/api/renderer/pluginMarket.ts</code></td></tr>
+<tr><td>插件安装器</td><td><code>src/main/api/renderer/pluginInstaller.ts</code></td></tr>
+<tr><td>开发项目管理</td><td><code>src/main/api/renderer/pluginDevProjects.ts</code></td></tr>
+<tr><td>内置插件定义</td><td><code>src/main/core/internalPlugins.ts</code></td></tr>
+<tr><td>内置插件加载器</td><td><code>src/main/core/internalPluginLoader.ts</code></td></tr>
+<tr><td>数据隔离命名空间</td><td><code>shared/pluginRuntimeNamespace.ts</code></td></tr>
+<tr><td>ZPX 打包/解压</td><td><code>src/main/utils/zpxArchive.ts</code></td></tr>
+<tr><td>API 管理器入口</td><td><code>src/main/api/index.ts</code></td></tr>
+<tr><td>类型定义（NPM）</td><td><code>ztools-api-types/ztools.api.d.ts</code></td></tr>
+<tr><td>plugin.json Schema</td><td><code>ztools-api-types/resource/ztools.schema.json</code></td></tr>
+<tr><td>CLI 工具</td><td><code>ztools-plugin-cli/</code></td></tr>
+<tr><td>设置插件（内置）</td><td><code>internal-plugins/setting/</code></td></tr>
+<tr><td>系统插件（内置）</td><td><code>internal-plugins/system/</code></td></tr>
+</table>
+</div>
+</section>
+
+<footer style="margin: 4em 0 2em; text-align: center; color: var(--muted); font-size: .85em; border-top: 1px solid var(--border); padding-top: 2em;">
+  <p>调研日期：2026-07-03 &nbsp;|&nbsp; 来源：<a href="https://github.com/ZToolsCenter/ZTools" target="_blank">ZToolsCenter/ZTools</a> &nbsp;|&nbsp; 版本：v2.6.1</p>
+</footer>
+
+</div>
+</body>
+</html>
