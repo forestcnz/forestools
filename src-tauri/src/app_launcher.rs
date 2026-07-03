@@ -9,6 +9,9 @@ use std::sync::{LazyLock, Mutex};
 pub struct AppInfo {
     pub name: String,
     pub path: String,
+    /// 搜索别名（如英文 .lnk 文件名），让中英文名称都可被搜索。
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 /// 扫描结果缓存（首次扫描后驻留，避免每次唤起都重扫）。
@@ -99,14 +102,63 @@ fn walk_lnks(dir: &PathBuf, apps: &mut Vec<AppInfo>, seen: &mut std::collections
         if stem.is_empty() || should_skip(&stem) {
             continue;
         }
-        let key = stem.to_lowercase();
+        let path_str = path.to_string_lossy().to_string();
+
+        // 优先取 Shell 本地化显示名（中文版 Windows 上系统应用为"控制中心"等），
+        // 取不到时回退到 .lnk 文件名。文件名作为搜索别名保留，中英文都能搜到。
+        let display = shell_display_name(&path_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let (name, aliases) = match display {
+            Some(d) if d != stem => (d, vec![stem.clone()]),
+            other => (other.unwrap_or_else(|| stem.clone()), Vec::new()),
+        };
+        if name.is_empty() || should_skip(&name) {
+            continue;
+        }
+        let key = name.to_lowercase();
         if !seen.insert(key) {
             continue;
         }
         apps.push(AppInfo {
-            name: stem,
-            path: path.to_string_lossy().to_string(),
+            name,
+            path: path_str,
+            aliases,
         });
+    }
+}
+
+/// 通过 SHGetFileInfoW(SHGFI_DISPLAYNAME) 获取 Shell 显示名（含本地化解析）。
+#[cfg(target_os = "windows")]
+fn shell_display_name(path: &str) -> Option<String> {
+    use windows_sys::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW};
+    const SHGFI_DISPLAYNAME: u32 = 0x0000_0200;
+    const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+    unsafe {
+        let normalized = path.replace('/', "\\");
+        let mut wide: Vec<u16> = normalized.encode_utf16().collect();
+        wide.push(0);
+        let mut shfi: SHFILEINFOW = std::mem::zeroed();
+        let cb = std::mem::size_of::<SHFILEINFOW>() as u32;
+        let r = SHGetFileInfoW(
+            wide.as_ptr(),
+            FILE_ATTRIBUTE_NORMAL,
+            &mut shfi,
+            cb,
+            SHGFI_DISPLAYNAME,
+        );
+        if r == 0 {
+            return None;
+        }
+        let len = shfi
+            .szDisplayName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(shfi.szDisplayName.len());
+        if len == 0 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&shfi.szDisplayName[..len]))
     }
 }
 
@@ -148,6 +200,7 @@ fn scan_inner() -> Vec<AppInfo> {
             apps.push(AppInfo {
                 name: stem,
                 path: path.to_string_lossy().to_string(),
+                aliases: Vec::new(),
             });
         }
     }
