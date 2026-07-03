@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZTools 功能全景调研报告</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --card: #fff;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --border: #e0e0e0;
+  --accent: #0071e3;
+  --code-bg: #f0f0f2;
+  --tag-fg: #fff;
+  --tag-bg: #0071e3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d1d1f;
+    --card: #2a2a2c;
+    --text: #f5f5f7;
+    --muted: #98989d;
+    --border: #3a3a3c;
+    --accent: #64a8ff;
+    --code-bg: #2e2e32;
+    --tag-bg: #0051a2;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 40px 20px;
+}
+.wrap { max-width: 960px; margin: 0 auto; }
+
+h1 { font-size: 2em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: .3em; }
+h1 small { font-size: .5em; font-weight: 400; color: var(--muted); display: block; margin-top: 4px; }
+.meta { color: var(--muted); font-size: .9em; margin-bottom: 2.5em; display: flex; gap: 1em; flex-wrap: wrap; }
+.meta span { background: var(--card); padding: 2px 12px; border-radius: 20px; border: 1px solid var(--border); }
+
+h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 2em 0 .8em;
+  padding-bottom: .35em;
+  border-bottom: 2px solid var(--border);
+}
+h3 { font-size: 1.1em; font-weight: 600; margin: 1.5em 0 .5em; }
+h4 { font-weight: 600; margin: 1em 0 .3em; color: var(--muted); }
+
+p, li { color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+
+code {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: .88em;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: .85em;
+  line-height: 1.5;
+  margin: .8em 0;
+}
+
+.tag {
+  display: inline-block;
+  font-size: .75em;
+  font-weight: 500;
+  color: var(--tag-fg);
+  background: var(--tag-bg);
+  padding: 1px 10px;
+  border-radius: 12px;
+  margin-right: 4px;
+}
+.tag.green { background: #34c759; }
+.tag.orange { background: #ff9f0a; }
+.tag.purple { background: #af52de; }
+.tag.red { background: #ff3b30; }
+.tag.gray { background: #8e8e93; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: .8em 0;
+  font-size: .92em;
+}
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; background: var(--code-bg); }
+
+.toc a { display: block; padding: 4px 0; color: var(--muted); font-size: .9em; }
+.toc a:hover { color: var(--accent); }
+.toc .l2 { padding-left: 1.2em; font-size: .85em; }
+.toc .l3 { padding-left: 2.4em; font-size: .82em; }
+
+.flow-box { display: flex; flex-wrap: wrap; gap: 8px; margin: .5em 0; }
+.flow-step {
+  background: var(--code-bg);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: .88em;
+  white-space: nowrap;
+}
+.flow-step::after { content: " →"; color: var(--muted); margin-left: 4px; }
+.flow-step:last-child::after { content: none; }
+
+ul.clean { padding-left: 1.4em; margin: .5em 0; }
+ul.clean li { margin: .25em 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>ZTools 功能全景调研<small>开源跨平台应用启动器与插件平台 · 完整功能调研报告</small></h1>
+<div class="meta">
+  <span>仓库：ZToolsCenter/ZTools</span>
+  <span>版本：v2.4.0</span>
+  <span>协议：MIT</span>
+  <span>平台：macOS / Windows</span>
+  <span>调研日期：2026-07-03</span>
+</div>
+
+<h2>目录</h2>
+<div class="toc">
+  <a href="#overview">一、项目定位与总览</a>
+  <a href="#stack" class="l2">1.1 技术栈</a>
+  <a href="#arch" class="l2">1.2 进程架构</a>
+  <a href="#launcher">二、快速启动与搜索</a>
+  <a href="#clipboard">三、剪贴板管理</a>
+  <a href="#superpanel">四、超级面板</a>
+  <a href="#plugin">五、插件系统</a>
+  <a href="#plugin-types" class="l3">5.1 插件类型</a>
+  <a href="#plugin-cmd" class="l3">5.2 指令匹配类型</a>
+  <a href="#plugin-api" class="l3">5.3 插件 API 全景</a>
+  <a href="#plugin-lifecycle" class="l3">5.4 装配生命周期</a>
+  <a href="#plugin-isolation" class="l3">5.5 数据隔离与安全</a>
+  <a href="#plugin-market" class="l3">5.6 插件市场与分发</a>
+  <a href="#ai">六、AI 集成</a>
+  <a href="#mcp">七、MCP Server</a>
+  <a href="#zbrowser">八、ZBrowser 浏览器自动化</a>
+  <a href="#sync">九、WebDAV 云同步</a>
+  <a href="#translate">十、离线翻译</a>
+  <a href="#misc">十一、辅助功能</a>
+  <a href="#httpapi" class="l3">11.1 HTTP API</a>
+  <a href="#float" class="l3">11.2 悬浮球</a>
+  <a href="#websearch" class="l3">11.3 网页快开</a>
+  <a href="#system" class="l3">11.4 系统指令与设置</a>
+  <a href="#theme" class="l3">11.5 主题定制</a>
+  <a href="#update" class="l3">11.6 应用更新</a>
+  <a href="#data">十二、数据持久化（LMDB）</a>
+  <a href="#summary">十三、总结</a>
+</div>
+
+<h2 id="overview">一、项目定位与总览</h2>
+<div class="card">
+<p><strong>ZTools</strong> 是 <span class="tag">uTools</span> 的开源实现，定位为高性能、可扩展的<strong>跨平台应用启动器与插件平台</strong>（类似 Alfred / Raycast）。它把"快速启动 + 万物皆指令 + 插件生态 + AI/自动化能力"打包成一个统一的桌面入口。</p>
+<p>核心特性一句话概括：</p>
+<ul class="clean">
+  <li><span class="tag green">入口</span> 拼音搜索 + 正则 + 历史 + 固定的快速启动</li>
+  <li><span class="tag green">生态</span> UI 插件 / 无界面插件 / 内置插件，完整 API 与市场分发</li>
+  <li><span class="tag green">效率</span> 剪贴板管理、超级面板、悬浮球、网页快开、系统指令</li>
+  <li><span class="tag purple">智能</span> AI 对话、MCP Server、ZBrowser 浏览器自动化、离线翻译</li>
+  <li><span class="tag orange">同步</span> WebDAV 云同步、应用内更新、独立 updater 替换 asar</li>
+  <li><span class="tag">性能</span> LMDB 键值存储、WebContentsView 架构、C++ 原生模块</li>
+</ul>
+<p>当前路线图中<strong>已完成</strong>：快速启动、插件系统、剪贴板、跨平台、LMDB、主题、数据隔离、插件市场、全局快捷键自定义、插件分离窗口。<strong>规划中</strong>：插件自动更新、云同步（已部分实现 WebDAV）、Linux 支持、MCP 工具集（已实现）。</p>
+</div>
+
+<h3 id="stack">1.1 技术栈</h3>
+<div class="card">
+<table>
+  <tr><th>层次</th><th>技术</th></tr>
+  <tr><td>框架</td><td>Electron 38.5 + Chrome 140 + Node 22.20</td></tr>
+  <tr><td>渲染层</td><td>Vue 3.5 + Pinia 3 + TypeScript 5.9</td></tr>
+  <tr><td>构建</td><td>Vite 7 + electron-vite 4 + electron-builder 25</td></tr>
+  <tr><td>数据库</td><td>LMDB 3.4（高性能嵌入式 KV 存储）</td></tr>
+  <tr><td>搜索引擎</td><td>Fuse.js 7 + pinyin-pro 3（拼音搜索）</td></tr>
+  <tr><td>原生模块</td><td>C++ (Node-API)：剪贴板监听、窗口管理、区域截图、取色、鼠标/键盘钩子（uiohook-napi）</td></tr>
+  <tr><td>图像处理</td><td>sharp 0.34</td></tr>
+  <tr><td>AI / 文档</td><td>openai 6（OpenAI 兼容）、marked + turndown（Markdown 转换）</td></tr>
+  <tr><td>同步 / 归档</td><td>webdav 5、tar 7、adm-zip、@electron/asar、yaml</td></tr>
+  <tr><td>测试</td><td>Vitest 4</td></tr>
+</table>
+</div>
+
+<h3 id="arch">1.2 进程架构</h3>
+<div class="card">
+<p>ZTools 是标准的 Electron 三段式架构，但<strong>插件运行在独立的隔离 Session + WebContentsView</strong>中，而非主窗口内的 iframe/Webview，这是其高性能与安全隔离的关键。</p>
+<table>
+  <tr><th>进程</th><th>职责</th><th>关键文件</th></tr>
+  <tr>
+    <td>主进程<br><code>src/main</code></td>
+    <td>窗口管理、插件生命周期、数据库、原生模块、所有 API handler、同步/AI/MCP/翻译/截图核心</td>
+    <td><code>managers/</code>（window / plugin / clipboard / assembly）、<code>api/</code>、<code>core/</code></td>
+  </tr>
+  <tr>
+    <td>主程序渲染<br><code>src/renderer</code></td>
+    <td>搜索界面、超级面板 UI、更新窗口；两种视图：Search / Plugin</td>
+    <td><code>App.vue</code>、<code>stores/</code>、<code>components/</code></td>
+  </tr>
+  <tr>
+    <td>插件渲染</td>
+    <td>每个插件独立 WebContentsView + 独立 Session，加载 <code>resources/preload.js</code></td>
+    <td><code>resources/preload.js</code>（不经 Vite 构建，原生 JS）</td>
+  </tr>
+</table>
+<p>主进程内部又有清晰的分层：<code>managers/</code>（生命周期管理器，windowManager 1133 行、pluginManager 1882 行、clipboardManager 860 行）→ <code>api/</code>（按消费者分 <code>shared</code> / <code>renderer</code> / <code>plugin</code> 三套 IPC）→ <code>core/</code>（领域引擎：lmdb / sync / zbrowser / commandScanner / native 等）。</p>
+</div>
+
+<h2 id="launcher">二、快速启动与搜索</h2>
+<div class="card">
+<p>ZTools 的核心入口。默认快捷键 <code>Option+Z</code>（macOS）/ <code>Alt+Z</code>（Windows）唤起主窗口。</p>
+<h4>万物皆指令（Command）</h4>
+<p>所有可搜索内容统一为 <code>Command</code> 类型：</p>
+<ul class="clean">
+  <li><code>type: 'direct'</code> — 直接启动：<code>subType: 'app'</code>（系统应用）/ <code>subType: 'system-setting'</code>（Windows 设置）</li>
+  <li><code>type: 'plugin'</code> — 插件功能</li>
+  <li><code>type: 'builtin'</code> — 内置系统指令（截图、取色等）</li>
+</ul>
+<h4>指令扫描</h4>
+<p>跨平台扫描系统已安装应用（<code>core/commandScanner/</code>）：</p>
+<ul class="clean">
+  <li>macOS：解析 <code>.app</code> 的 <code>Info.plist</code></li>
+  <li>Windows：扫描开始菜单 <code>.lnk</code> 快捷方式</li>
+  <li>Linux：<code>linuxScanner.ts</code>（实验性）</li>
+</ul>
+<p>扫描结果缓存，非必要不重扫，提升启动与切换性能（v2.4.0 优化）。启动由 <code>core/commandLauncher/</code> 按平台分发。</p>
+<h4>搜索引擎</h4>
+<ul class="clean">
+  <li>Fuse.js 模糊匹配 + <strong>pinyin-pro 拼音搜索</strong>（全拼/首字母）</li>
+  <li>历史记录、固定应用（Pin）、聚合视图（历史 + 固定 + 窗口匹配 + mainPush）</li>
+  <li>指令别名（v2.4.0 新增，支持多触发词，匹配结果高亮）</li>
+  <li>Tab 键在搜索结果间切换（v2.4.0）</li>
+  <li>本地启动项（localShortcuts）：自定义文件/文件夹/应用快捷方式，搜索时显示安装路径</li>
+</ul>
+<h4>唤醒控制</h4>
+<p>全局快捷键唤醒（支持 F1–F12 功能键、双击修饰键检测 <code>doubleTapManager.ts</code>）、<strong>唤醒黑名单</strong>（屏蔽特定应用触发，v2.4.0）、应用快捷键（支持携带参数）、主窗口记忆位置并恢复。</p>
+</div>
+
+<h2 id="clipboard">三、剪贴板管理</h2>
+<div class="card">
+<p>跨平台原生实现的剪贴板历史管理（<code>managers/clipboardManager.ts</code> 860 行 + C++ <code>ClipboardMonitor</code>）。</p>
+<ul class="clean">
+  <li>历史记录：文本 / 图片 / 文件，支持分页、搜索、过滤</li>
+  <li>去重：修复某些软件触发多次重复记录（v2.4.0）</li>
+  <li>可配置历史数据保存天数（v2.4.0）</li>
+  <li>写入回贴：可选写入后自动粘贴</li>
+  <li>插件可读写：通过 <code>ztools.clipboard</code> 与 <code>copyText/copyImage/copyFile</code> API</li>
+</ul>
+<h4>插件剪贴板 API</h4>
+<pre><code>ztools.clipboard.getHistory(page, pageSize, filter)
+ztools.clipboard.search(keyword)
+ztools.clipboard.write(id, shouldPaste)
+ztools.clipboard.writeContent({ type:'text'|'image', content }, shouldPaste)
+ztools.clipboard.onChange(callback)   // 监听变化
+ztools.copyText(text) | copyImage(img) | copyFile(path) | getCopyedFiles()</code></pre>
+</div>
+
+<h2 id="superpanel">四、超级面板</h2>
+<div class="card">
+<p>类 uTools 的智能右键面板（<code>core/superPanelManager.ts</code> + <code>components/SuperPanel.vue</code>）。</p>
+<ul class="clean">
+  <li><strong>触发方式</strong>：鼠标中键 / 长按右键</li>
+  <li><strong>智能识别</strong>：自动识别剪贴板内容（文本/图片/文件/链接），匹配可用插件</li>
+  <li>紧凑布局（v2.4.0），节省屏幕空间</li>
+  <li>固定指令到面板（<code>pinToSuperPanel</code>）、屏蔽特定应用（blockedApps）</li>
+  <li>集成<strong>离线翻译</strong>（选中翻译，Windows 已修复初始化问题）</li>
+  <li>图片分析（<code>analyzeImage</code>，基于 sharp）</li>
+</ul>
+</div>
+
+<h2 id="plugin">五、插件系统（核心）</h2>
+<div class="card">
+<p>插件系统是 ZTools 的灵魂，完整对齐 uTools 开发模型。详见专题报告 <code>ztools-plugin-report.html</code>，此处做功能全景补全。</p>
+
+<h3 id="plugin-types">5.1 插件类型</h3>
+<table>
+  <tr><th>类型</th><th>判定</th><th>说明</th></tr>
+  <tr><td>UI 插件</td><td><code>plugin.json</code> 有 <code>main</code></td><td>加载 HTML 界面到 WebContentsView</td></tr>
+  <tr><td>无界面插件</td><td>无 <code>main</code></td><td>加载空白页，<code>mode:'none'</code>，<code>enter()</code> 执行后台逻辑</td></tr>
+  <tr><td>内置插件</td><td>随应用分发</td><td><code>setting</code>（独立 Vue 项目，Vite+UnoCSS）、<code>system</code>；可禁用（v2.4.0）</td></tr>
+  <tr><td>开发版插件</td><td>本地目录或 HTTP URL</td><td>热重载开发，支持脚手架、打包、校验、排序</td></tr>
+</table>
+
+<h3 id="plugin-cmd">5.2 指令匹配类型（features[].cmds）</h3>
+<table>
+  <tr><th>类型</th><th>说明</th><th>存储</th></tr>
+  <tr><td>字符串</td><td>功能指令，支持拼音搜索</td><td><code>commands</code>（Fuse.js）</td></tr>
+  <tr><td><code>regex</code></td><td>正则匹配用户输入</td><td><code>regexCommands</code></td></tr>
+  <tr><td><code>over</code></td><td>匹配任意文本（可设排除规则）</td><td><code>regexCommands</code></td></tr>
+  <tr><td><code>img</code></td><td>匹配粘贴的图片</td><td><code>regexCommands</code></td></tr>
+  <tr><td><code>files</code></td><td>匹配粘贴的文件（限类型/扩展名）</td><td><code>regexCommands</code></td></tr>
+  <tr><td><code>window</code></td><td>匹配当前活动窗口（应用名/标题）</td><td><code>regexCommands</code></td></tr>
+</table>
+
+<h3 id="plugin-api">5.3 插件 API 全景（window.ztools）</h3>
+<p>插件通过全局 <code>window.ztools</code> 对象访问系统能力。以下是按功能域归类的完整 API 清单：</p>
+
+<h4>数据库 / 存储</h4>
+<pre><code>ztools.db.put/get/remove/bulkDocs/allDocs/postAttachment/getAttachment(...)   // 同步
+ztools.db.promises.*         // 异步 Promise 版
+ztools.dbStorage.setItem/getItem/removeItem   // localStorage 风格</code></pre>
+
+<h4>剪贴板</h4>
+<pre><code>ztools.clipboard.{getHistory,search,delete,clear,write,writeContent,onChange}
+ztools.copyText / copyImage / copyFile / getCopyedFiles</code></pre>
+
+<h4>UI / 窗口控制</h4>
+<pre><code>ztools.setExpendHeight(h)        // 扩展高度
+ztools.setSubInput / setSubInputValue / removeSubInput / subInputFocus / subInputSelect
+ztools.outPlugin()               // 退出插件
+ztools.onPluginEnter / onPluginOut / onPluginDetach / onMainPush   // 生命周期回调
+ztools.isDarkColors / getThemeInfo / onThemeChange</code></pre>
+
+<h4>对话框 / 文件</h4>
+<pre><code>ztools.showOpenDialog / showSaveDialog / getPath / getPathForFile
+ztools.shellTrashItem / readCurrentFolderPath / readCurrentBrowserUrl</code></pre>
+
+<h4>屏幕 / 截图 / 设备</h4>
+<pre><code>ztools.screenCapture / desktopCaptureSources
+ztools.getCursorScreenPoint / getDisplayNearestPoint
+ztools.simulateKeyboardTap     // 输入模拟
+ztools.isMacOs / getNativeId / getAppVersion / isDev</code></pre>
+
+<h4>动态 Feature / 指令</h4>
+<pre><code>ztools.getFeatures / setFeature / removeFeature
+ztools.getCommands / updateCommandAliases / updatePlaceholder / updateAvatar
+ztools.notifyDisabledCommandsChanged</code></pre>
+
+<h4>HTTP / Shell / FFmpeg</h4>
+<pre><code>ztools.http.{setHeaders,getHeaders,clearHeaders}
+ztools.shell.*                  // 命令行执行
+ztools.ffmpeg / runFFmpeg       // FFmpeg 路径与执行（preload 端直接 spawn 子进程）
+ztools.sharp(input, options)    // 图像处理</code></pre>
+
+<h4>AI</h4>
+<pre><code>ztools.ai(option, streamCallback)   // 流式或一次性，返回带 .abort() 的 PromiseLike
+ztools.allAiModels()</code></pre>
+
+<h4>浏览器自动化（zbrowser / ubrowser）</h4>
+<pre><code>ztools.zbrowser        // 每次访问返回新 Builder（链式 API）
+ztools.ubrowser        // uTools 兼容入口，转发到 zbrowser
+ztools.getIdleUBrowsers() / clearUBrowserCache() / ubrowserLogin()</code></pre>
+
+<h4>MCP 工具声明</h4>
+<pre><code>ztools.registerTool(name, handler)        // 声明插件工具供 MCP 消费
+ztools.mcpServerStatus()</code></pre>
+
+<h4>内置插件专用 API（ztools.internal）</h4>
+<p>仅限 <code>internal-plugins/</code> 调用，提供更高系统权限（通道 <code>internal:</code> 前缀），覆盖：数据库、应用启动、指令别名、本地启动项、插件全生命周期管理、全局/应用快捷键、窗口材质/透明度、主题/头像/托盘、开机自启、代理、应用更新、WebDAV 同步、超级面板、悬浮球、HTTP 服务、MCP 服务、AI 模型管理、网页快开、唤醒黑名单、调试日志等十余个域。</p>
+
+<h3 id="plugin-lifecycle">5.4 装配生命周期</h3>
+<p>由 <code>pluginAssemblyCoordinator.ts</code> 管理状态机，避免插件界面闪烁：</p>
+<div class="flow-box">
+  <span class="flow-step">搜索到插件指令</span>
+  <span class="flow-step">beginAssembly</span>
+  <span class="flow-step">createPluginView</span>
+  <span class="flow-step">读 plugin.json</span>
+  <span class="flow-step">创建隔离 Session</span>
+  <span class="flow-step">注册 preload + loadURL</span>
+  <span class="flow-step">domReady</span>
+  <span class="flow-step">readyToDisplay</span>
+  <span class="flow-step">displayed</span>
+</div>
+
+<h3 id="plugin-isolation">5.5 数据隔离与安全</h3>
+<ul class="clean">
+  <li><strong>数据隔离</strong>：插件数据库自动加 <code>PLUGIN/{pluginName}/</code> 前缀，主程序用 <code>ZTOOLS/</code></li>
+  <li><strong>Session 隔离</strong>：每插件独立 Session（含独立 zbrowser 窗口池）</li>
+  <li><strong>清理</strong>：删除插件时自动清理其历史、固定列表、数据（v2.4.0 修复）</li>
+  <li><strong>API 分发</strong>：新 API 走 <code>pluginApiDispatcher.ts</code> 注册表，统一 <code>plugin.api</code> 通道，三方法 <code>ipcSendSync/ipcInvoke/ipcSend</code></li>
+  <li>插件可被<strong>禁用</strong>而无需卸载（v2.4.0）</li>
+</ul>
+
+<h3 id="plugin-market">5.6 插件市场与分发</h3>
+<ul class="clean">
+  <li>插件托管于 <a href="https://github.com/ZToolsCenter/ZTools-plugins/releases">ZTools-plugins</a> GitHub Releases，<code>plugins.json</code> 描述列表</li>
+  <li>包格式：ZIP（含 <code>plugin.json</code>）；生产部署用 <strong>ZPX</strong>（gzip asar，<code>utils/zpxArchive.ts</code>）</li>
+  <li>一键安装 / 升级（语义化版本比较，先卸旧再装新）/ 详情查看</li>
+  <li>支持从 npm 安装、从本地文件导入、开发版导入</li>
+  <li>配套子模块：<code>ztools-api-types</code>（TS 类型，NPM 发布）、<code>ztools-plugin-cli</code>（脚手架与发布 CLI）</li>
+</ul>
+</div>
+
+<h2 id="ai">六、AI 集成</h2>
+<div class="card">
+<p>OpenAI 兼容格式的 AI 能力（<code>api/plugin/ai.ts</code> + <code>api/renderer/aiModels.ts</code>），依赖 <code>openai</code> SDK。</p>
+<ul class="clean">
+  <li><strong>模型管理</strong>：用户在设置中配置多个 OpenAI 兼容模型（baseURL + key + 模型名）</li>
+  <li><strong>插件调用</strong>：<code>ztools.ai(option, streamCallback)</code>，支持流式与非流式，返回带 <code>.abort()</code> 的 PromiseLike</li>
+  <li><strong>模型列表</strong>：<code>ztools.allAiModels()</code> 获取所有可用模型</li>
+  <li>内置插件可管理模型 CRUD（<code>internal.aiModels</code>）</li>
+  <li>图像分析 <code>analyzeImage</code>（sharp 处理）</li>
+</ul>
+</div>
+
+<h2 id="mcp">七、MCP Server</h2>
+<div class="card">
+<p>ZTools 把自身及所有插件声明的工具暴露为 <strong>MCP (Model Context Protocol) JSON-RPC 服务</strong>（<code>core/mcpServer.ts</code> + <code>api/plugin/tools.ts</code>），让外部 AI 客户端可调用本地能力。</p>
+<ul class="clean">
+  <li>插件通过 <code>ztools.registerTool(name, handler)</code> 声明工具</li>
+  <li>主进程汇总所有已装插件的工具，通过 MCP 协议对外暴露</li>
+  <li>工具名生成支持插件名称格式化（v2.4.0）</li>
+  <li>设置中可配置端口、密钥、启停；<code>mcpServerStatus / mcpServerTools</code> 查询状态与工具列表</li>
+</ul>
+<p><span class="tag purple">意义</span> ZTools 既是 AI 的"桌面入口"，又能反过来成为 AI Agent 的工具提供方——这是其区别于普通启动器的关键定位。</p>
+</div>
+
+<h2 id="zbrowser">八、ZBrowser 浏览器自动化</h2>
+<div class="card">
+<p>uTools ubrowser 的实现（<code>core/zbrowser/</code> + <code>api/plugin/zbrowser.ts</code> + <code>resources/zbrowser/</code> runner/client）。</p>
+<ul class="clean">
+  <li><strong>窗口池管理</strong>：<code>zbrowserManager.ts</code> 维护每插件独立 Session 的浏览器窗口池，复用 <code>getIdleUBrowsers()</code></li>
+  <li><strong>操作队列执行器</strong>：<code>zbrowserExecutor.ts</code> 串行执行链式操作</li>
+  <li><strong>链式 Builder API</strong>：<code>ztools.zbrowser().goto().wait().click().value()...</code></li>
+  <li>设备预设（<code>devices.ts</code>）、代理设置（异步，破坏性变更：uTools 为同步）</li>
+  <li>缓存清理 <code>clearUBrowserCache</code></li>
+</ul>
+</div>
+
+<h2 id="sync">九、WebDAV 云同步</h2>
+<div class="card">
+<p>跨设备数据同步（<code>core/sync/</code> + <code>api/renderer/sync.ts</code>，依赖 <code>webdav</code>）。</p>
+<ul class="clean">
+  <li>同步引擎 <code>syncEngine.ts</code> + WebDAV 客户端 <code>webdavClient.ts</code></li>
+  <li>插件目录变更监听 <code>pluginSyncWatcher.ts</code>（标记脏数据）+ 哈希计算 <code>pluginHasher.ts</code></li>
+  <li>支持测试连接、保存配置、手动同步、强制从云端下载、停止自动同步、查询未同步数</li>
+  <li>v2.4.0 修复 <code>%2F</code> 路径保留目录结构被服务端拒绝、层级路径与目录创建异常</li>
+</ul>
+</div>
+
+<h2 id="translate">十、离线翻译</h2>
+<div class="card">
+<p><code>core/translationManager.ts</code>，基于 <strong>Bergamot WASM + Firefox 翻译模型</strong>，完全离线、无云端依赖。集成于超级面板的"选中翻译"功能（<code>updateSuperPanelTranslate / getTranslationStatus</code>）。</p>
+</div>
+
+<h2 id="misc">十一、辅助功能</h2>
+
+<h3 id="httpapi">11.1 HTTP API</h3>
+<div class="card">
+<p>内置本地 HTTP 服务（<code>core/httpServer.ts</code>），允许第三方应用/脚本控制 ZTools。</p>
+<ul class="clean">
+  <li>监听 <code>http://127.0.0.1:36578</code>（端口可改），Bearer Token 认证，开启 CORS</li>
+  <li>接口：<code>GET /</code>（状态，免认证）、<code>POST /api/window/show|hide|toggle</code>（可选 <code>text</code> 填充搜索框）</li>
+  <li>仅本机访问、默认关闭、请求体限 1MB、密钥重生成后旧密钥立即失效</li>
+  <li>提供 JS / Python / AppleScript / PowerShell 调用示例</li>
+</ul>
+</div>
+
+<h3 id="float">11.2 悬浮球</h3>
+<div class="card">
+<p><code>core/floatingBallManager.ts</code> — 屏幕置顶小圆球，单击/双击触发，可配置启停与字母样式。</p>
+</div>
+
+<h3 id="websearch">11.3 网页快开</h3>
+<div class="card">
+<p>自定义搜索引擎（<code>api/renderer/webSearch.ts</code>），支持 CRUD 与自动抓取 favicon。输入关键词直达搜索结果。</p>
+</div>
+
+<h3 id="system">11.4 系统指令与设置</h3>
+<div class="card">
+<ul class="clean">
+  <li><strong>系统指令</strong>（<code>api/renderer/systemCommands.ts</code>）：截图（内置，v2.4.0）、取色、Windows 注销/睡眠（改用 PowerShell）、macOS 系统操作</li>
+  <li><strong>Windows 系统设置</strong>（<code>core/systemSettings/</code> + <code>msSettingsUris.ts</code>）：通过 <code>ms-settings:</code> URI 集成，可作为指令搜索启动</li>
+  <li><strong>原生模块</strong>（C++，<code>core/native/</code>）：ClipboardMonitor、WindowMonitor、WindowManager、ScreenCapture、ColorPicker、MouseMonitor</li>
+  <li>区域截图（Windows 原生）、屏幕截图 <code>core/screenCapture.ts</code></li>
+</ul>
+</div>
+
+<h3 id="theme">11.5 主题定制</h3>
+<div class="card">
+<p>系统/亮色/暗色模式，6 种主题色 + 自定义；亚克力透明度可调（macOS 窗口材质 material 可选）。统一滚动条样式与字体规范（v2.4.0）。通用控件类 <code>.btn .input .select .toggle .card</code> 复用。</p>
+</div>
+
+<h3 id="update">11.6 应用更新</h3>
+<div class="card">
+<p><code>api/updater.ts</code> + 独立 updater 程序，绕过 Electron 常规更新限制。</p>
+<div class="flow-box">
+  <span class="flow-step">检查 latest.yml</span>
+  <span class="flow-step">下载平台更新包 ZIP</span>
+  <span class="flow-step">启动独立 updater</span>
+  <span class="flow-step">应用退出</span>
+  <span class="flow-step">替换 app.asar</span>
+  <span class="flow-step">自动重启</span>
+</div>
+<p>更新源 GitHub Releases，命名 <code>update-{platform}-{arch}-{version}.zip</code>（如 <code>update-darwin-arm64-1.2.8.zip</code>）。updater：macOS <code>ztools-updater</code>、Windows <code>ztools-agent.exe</code>（<code>scripts/updater.mjs</code> 构建）。支持自动检查开关（蓝奏云备用源 <code>utils/lanzou.ts</code>）。</p>
+</div>
+
+<h2 id="data">十二、数据持久化（LMDB）</h2>
+<div class="card">
+<p>全部数据落在 LMDB（<code>core/lmdb/</code>），路径 <code>userData/lmdb</code>，三个库：<code>main</code> / <code>meta</code> / <code>attachment</code>。</p>
+<ul class="clean">
+  <li>命名空间：<code>ZTOOLS/</code>（主程序）、<code>PLUGIN/{name}/</code>（插件自动隔离）、<code>SYNC/</code>（同步配置）</li>
+  <li>同时提供同步 API（<code>syncApi.ts</code>，供插件 sendSync 用）与异步 Promise API（<code>promiseApi.ts</code>）</li>
+  <li>支持附件存储（postAttachment / getAttachment）</li>
+  <li>启动数据迁移 <code>startupDataMigrations.ts</code></li>
+</ul>
+<p><span class="tag">性能</span> LMDB 是嵌入式 KV 存储中性能最高的之一，配合 WebContentsView 架构，是 ZTools"极速响应"卖点的技术基础。</p>
+</div>
+
+<h2 id="summary">十三、总结</h2>
+<div class="card">
+<h4>产品定位</h4>
+<p>ZTools 不只是一个启动器，而是"启动器 + 插件平台 + AI/自动化 hub"的三合一。它以 uTools 开源替代为切入点，但在<strong> MCP / AI / 浏览器自动化 / 离线翻译</strong>等方向上做了显著扩展，使其具备成为"本地 AI Agent 桌面入口"的潜力。</p>
+
+<h4>工程亮点</h4>
+<ul class="clean">
+  <li>分层清晰：managers（生命周期）→ api（按消费者三套 IPC）→ core（领域引擎）</li>
+  <li>插件隔离彻底：独立 Session + WebContentsView + 数据库命名空间前缀</li>
+  <li>双 preload 设计：主程序（contextBridge，热重载）vs 插件（原生 JS，需重启）</li>
+  <li>统一 API 分发器 <code>pluginApiDispatcher</code> 替代散落的 ipcMain.handle</li>
+  <li>独立 updater 替换 asar，规避 Electron 更新限制</li>
+  <li>原生 C++ 模块补齐 Electron 在剪贴板监听/窗口管理/截图上的短板</li>
+</ul>
+
+<h4>当前短板 / 待完善</h4>
+<ul class="clean">
+  <li>Linux 支持仍为实验性（scanner/launcher 已就位但未完整打包）</li>
+  <li>插件自动更新为路线图项（市场已有升级机制，自动检查待补）</li>
+  <li>同步为 WebDAV 单一方案，无通用云同步</li>
+  <li><code>resources/preload.js</code> 不经构建，插件 API 修改需重启，开发体验略受限</li>
+</ul>
+
+<h4>对本项目（forestools）的启示</h4>
+<p>本仓库当前是一个 Tauri 应用（见 <code>src-tauri/</code>），已实现窗口记忆、托盘、Escape 隐藏等基础能力。ZTools 作为同类成熟产品，其<strong>万物皆指令的统一 Command 模型、插件隔离 Session 架构、统一 API 分发器、超级面板智能识别、MCP 暴露本地工具给 AI</strong>等设计，均可作为后续功能演进的参考蓝本。</p>
+</div>
+
+<p style="text-align:center;color:var(--muted);margin-top:2em;font-size:.85em;">
+  数据来源：ZToolsCenter/ZTools 仓库源码（README / CLAUDE.md / changelog / package.json / docs/http-api.md / resources/preload.js）· 调研于 2026-07-03
+</p>
+
+</div>
+</body>
+</html>
