@@ -341,6 +341,27 @@ mod platform {
         lpVtbl: *const IPersistFileVtbl,
     }
 
+    /// 展开 `%SystemRoot%`、`%ProgramFiles%` 等环境变量。
+    fn expand_environment_strings(s: &str) -> String {
+        use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
+        unsafe {
+            let mut wide: Vec<u16> = s.encode_utf16().collect();
+            wide.push(0);
+            let mut buf = vec![0u16; 32768];
+            let n = ExpandEnvironmentStringsW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32);
+            if n == 0 {
+                return s.to_string();
+            }
+            let len = (n as usize).min(buf.len());
+            let actual = buf[..len].iter().position(|&c| c == 0).unwrap_or(len);
+            if actual == 0 {
+                s.to_string()
+            } else {
+                String::from_utf16_lossy(&buf[..actual])
+            }
+        }
+    }
+
     /// 在干净的 STA 线程里解析 .lnk 目标路径，规避宿主线程 COM 套间不确定的问题。
     fn resolve_lnk_target(lnk: &str) -> Option<String> {
         let lnk = lnk.to_string();
@@ -412,7 +433,10 @@ mod platform {
         ((*vt).parent.Release)(psl);
         // 仅返回存在的真实文件目标（避免拿到环境变量占位路径）
         if let Some(t) = target {
-            let cleaned = t.replace('/', "\\");
+            // 系统快捷方式的目标常含 %SystemRoot% 等环境变量，必须展开后才能
+            // 通过存在性校验并供 SHGetFileInfo 正确取图标。
+            let expanded = expand_environment_strings(&t);
+            let cleaned = expanded.replace('/', "\\");
             if std::path::Path::new(&cleaned).exists() {
                 Some(cleaned)
             } else {
@@ -433,6 +457,44 @@ mod platform {
             writer.write_image_data(rgba).ok()?;
         }
         Some(out)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 验证开始菜单里的系统快捷方式能解析到真实目标文件（含 %SystemRoot% 等环境变量展开），
+        /// 这是去除系统应用图标小箭头的关键路径。
+        #[test]
+        fn resolve_system_shortcut_target() {
+            let apps = crate::app_launcher::scan_cached();
+            let mut checked = 0;
+            let mut resolved = 0;
+            for a in apps.iter().take(200) {
+                let lower = a.path.to_ascii_lowercase();
+                if !lower.ends_with(".lnk") || !lower.contains("start menu") {
+                    continue;
+                }
+                checked += 1;
+                if let Some(t) = resolve_lnk_target(&a.path) {
+                    assert!(
+                        !t.eq_ignore_ascii_case(&a.path),
+                        "解析到的目标不应是 .lnk 本身: {}",
+                        a.path
+                    );
+                    assert!(std::path::Path::new(&t).exists(), "目标文件应存在: {}", t);
+                    resolved += 1;
+                }
+                if checked >= 8 {
+                    break;
+                }
+            }
+            println!("[icon test] 系统快捷方式目标解析: 检查 {} 个, 成功 {}", checked, resolved);
+            assert!(
+                resolved > 0 || checked == 0,
+                "应至少有一个系统快捷方式能解析到真实目标（验证环境变量展开生效）"
+            );
+        }
     }
 }
 
