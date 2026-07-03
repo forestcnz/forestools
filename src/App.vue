@@ -7,6 +7,12 @@ const inputRef = ref<HTMLInputElement>();
 let dragStartX = 0;
 let dragStartY = 0;
 
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    getCurrentWindow().hide();
+  }
+}
+
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return;
   dragStartX = e.clientX;
@@ -41,6 +47,7 @@ onMounted(async () => {
       type="text"
       class="search-input"
       placeholder="搜索..."
+      @keydown="onKeyDown"
     />
   </main>
 </template>
