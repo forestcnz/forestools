@@ -104,6 +104,7 @@ mod platform {
     // SHGetFileInfoW 标志
     const SHGFI_ICON: u32 = 0x0000_0100;
     const SHGFI_LARGEICON: u32 = 0x0000_0000;
+    const SHGFI_PIDL: u32 = 0x0000_0008;
     const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
     const DIB_RGB_COLORS: u32 = 0;
 
@@ -111,15 +112,16 @@ mod platform {
 
     /// 提取应用图标并编码为 PNG。失败返回 None。
     pub fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
-        // 对 .lnk 快捷方式：先解析出目标路径，再从目标提取图标，
-        // 以避免快捷方式图标上叠加的 Windows 小箭头。
-        let effective = if path.to_ascii_lowercase().ends_with(".lnk") {
-            resolve_lnk_target(path).unwrap_or_else(|| path.to_string())
-        } else {
-            path.to_string()
-        };
+        // 对 .lnk 快捷方式：在干净 STA 线程上按 IconLocation / 目标 / PIDL 解析并提取图标，
+        // 均失败时回退到 .lnk 本身。前三者都不带 Windows 快捷方式小箭头。
+        let is_lnk = path.to_ascii_lowercase().ends_with(".lnk");
         unsafe {
-            let hicon = get_hicon(&effective)?;
+            let hicon: Option<HIcon> = if is_lnk {
+                resolve_lnk(path).or_else(|| get_hicon(path))
+            } else {
+                get_hicon(path)
+            };
+            let hicon = hicon?;
             let png = hicon_to_png(hicon);
             DestroyIcon(hicon);
             png
@@ -316,6 +318,17 @@ mod platform {
         parent: IUnknownVtbl,
         // 第 4 个方法：GetPath(This, pszFile, cch, pfd, fFlags)
         GetPath: unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut c_void, i32) -> HRESULT,
+        // 第 5 个方法：GetIDList(This, ppidl) —— 返回 PIDL（文件资源管理器等快捷方式用 PIDL 而非路径）
+        GetIDList: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT,
+        SetIDList: *mut c_void,
+        GetDescription: *mut c_void,
+        SetDescription: *mut c_void,
+        GetWorkingDirectory: *mut c_void,
+        SetWorkingDirectory: *mut c_void,
+        GetArguments: *mut c_void,
+        SetArguments: *mut c_void,
+        // 第 12 个方法：GetIconLocation(This, pszIconPath, cch, piIcon)
+        GetIconLocation: unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut i32) -> HRESULT,
         // 后续方法不声明（不会被调用）
     }
 
@@ -362,20 +375,53 @@ mod platform {
         }
     }
 
-    /// 在干净的 STA 线程里解析 .lnk 目标路径，规避宿主线程 COM 套间不确定的问题。
-    fn resolve_lnk_target(lnk: &str) -> Option<String> {
+    /// 在干净的 STA 线程里解析 .lnk 并直接提取图标，规避宿主线程 COM 套间不确定的问题。
+    /// 返回的 HIcon 跨线程可用（GDI 全局句柄），由调用方负责 DestroyIcon。
+    fn resolve_lnk(lnk: &str) -> Option<HIcon> {
         let lnk = lnk.to_string();
         let handle = std::thread::spawn(move || unsafe {
             // 在新线程上以 STA 初始化 COM；返回值忽略（已初始化/套间冲突时解析会自动失败回退）。
             let _ = CoInitializeEx(std::ptr::null(), COINIT_STA as u32);
-            let result = resolve_lnk_target_inner(&lnk);
+            let result = resolve_lnk_inner(&lnk);
             CoUninitialize();
-            result
+            // HIcon（裸指针）非 Send，经 usize 中转跨线程。
+            result.map(|h| h as usize)
         });
-        handle.join().ok().flatten()
+        handle.join().ok().flatten().map(|u| u as *mut c_void)
     }
 
-    unsafe fn resolve_lnk_target_inner(lnk: &str) -> Option<String> {
+    /// 校验路径（展开环境变量、规范分隔符），存在则返回规范化后的绝对路径。
+    unsafe fn validate_path(raw: &str) -> Option<String> {
+        let expanded = expand_environment_strings(raw);
+        let cleaned = expanded.replace('/', "\\");
+        if cleaned.is_empty() {
+            return None;
+        }
+        // 去掉可能的 ",index" 后缀（IconLocation 偶尔带），保留纯路径
+        let path_only = cleaned.split(',').next().unwrap_or("").trim().to_string();
+        if std::path::Path::new(&path_only).exists() {
+            Some(path_only)
+        } else {
+            None
+        }
+    }
+
+    /// 通过 SHGetFileInfoW(SHGFI_PIDL) 从 PIDL 取图标（用于文件资源管理器这类
+    /// 以 PIDL 而非文件路径为目标的快捷方式）。
+    unsafe fn icon_from_pidl(pidl: *mut c_void) -> Option<HIcon> {
+        let mut shfi: SHFILEINFOW = std::mem::zeroed();
+        let cb = std::mem::size_of::<SHFILEINFOW>() as u32;
+        let flags = SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON;
+        let r = SHGetFileInfoW(pidl as *const u16, 0, &mut shfi, cb, flags);
+        if r == 0 || shfi.hIcon.is_null() {
+            None
+        } else {
+            Some(shfi.hIcon)
+        }
+    }
+
+    unsafe fn resolve_lnk_inner(lnk: &str) -> Option<HIcon> {
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
         let mut psl: *mut c_void = std::ptr::null_mut();
         let hr = CoCreateInstance(
             &ShellLink,
@@ -404,46 +450,93 @@ mod platform {
         let mut wide: Vec<u16> = lnk.encode_utf16().collect();
         wide.push(0);
         let hr = ((*pvt).Load)(ppf, wide.as_ptr(), STGM_READ);
-        let target = if hr == 0 {
-            // GetPath
-            let mut buf = [0u16; 1040];
-            let mut find_data: [u8; 592] = [0; 592]; // WIN32_FIND_DATAW 占位（不读取）
-            let hr = ((*vt).GetPath)(
+
+        let hicon = if hr == 0 {
+            // 1) 显式图标资源（IconLocation）：文件资源管理器等特殊快捷方式可能
+            //    没有常规目标，但设置图标来源；从该资源直接取图标可去掉小箭头。
+            let mut iconbuf = [0u16; 1040];
+            let mut icon_index: i32 = 0;
+            let hr = ((*vt).GetIconLocation)(
                 psl,
-                buf.as_mut_ptr(),
-                buf.len() as i32,
-                find_data.as_mut_ptr() as *mut c_void,
-                SLGP_FLAGS_RAW,
+                iconbuf.as_mut_ptr(),
+                iconbuf.len() as i32,
+                &mut icon_index,
             );
+            let mut found = None;
             if hr == 0 {
-                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                let len = iconbuf.iter().position(|&c| c == 0).unwrap_or(iconbuf.len());
                 if len > 0 {
-                    Some(String::from_utf16_lossy(&buf[..len]))
-                } else {
-                    None
+                    let raw = String::from_utf16_lossy(&iconbuf[..len]);
+                    if let Some(p) = validate_path(&raw) {
+                        found = extract_icon_resource(&p, icon_index);
+                    }
                 }
-            } else {
-                None
             }
+            // 2) 目标路径（GetPath）：系统快捷方式目标常含 %SystemRoot% 等
+            //    环境变量，validate_path 会展开并校验存在性。
+            if found.is_none() {
+                let mut buf = [0u16; 1040];
+                let mut find_data: [u8; 592] = [0; 592]; // WIN32_FIND_DATAW 占位（不读取）
+                let hr = ((*vt).GetPath)(
+                    psl,
+                    buf.as_mut_ptr(),
+                    buf.len() as i32,
+                    find_data.as_mut_ptr() as *mut c_void,
+                    SLGP_FLAGS_RAW,
+                );
+                if hr == 0 {
+                    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                    if len > 0 {
+                        let raw = String::from_utf16_lossy(&buf[..len]);
+                        if let Some(p) = validate_path(&raw) {
+                            found = get_hicon(&p);
+                        }
+                    }
+                }
+            }
+            // 3) PIDL（GetIDList）：文件资源管理器等用 PIDL 指向 Shell 项，无文件路径；
+            //    用 SHGetFileInfoW(SHGFI_PIDL) 取该 Shell 项图标，同样无小箭头。
+            if found.is_none() {
+                let mut pidl: *mut c_void = std::ptr::null_mut();
+                let hr = ((*vt).GetIDList)(psl, &mut pidl);
+                if hr == 0 && !pidl.is_null() {
+                    found = icon_from_pidl(pidl);
+                    CoTaskMemFree(pidl);
+                }
+            }
+            found
         } else {
             None
         };
 
         ((*pvt).parent.Release)(ppf);
         ((*vt).parent.Release)(psl);
-        // 仅返回存在的真实文件目标（避免拿到环境变量占位路径）
-        if let Some(t) = target {
-            // 系统快捷方式的目标常含 %SystemRoot% 等环境变量，必须展开后才能
-            // 通过存在性校验并供 SHGetFileInfo 正确取图标。
-            let expanded = expand_environment_strings(&t);
-            let cleaned = expanded.replace('/', "\\");
-            if std::path::Path::new(&cleaned).exists() {
-                Some(cleaned)
-            } else {
+        hicon
+    }
+
+    /// 从 exe/dll/ico 文件按索引/资源 ID 提取图标（支持负数资源 ID，如 imageres.dll,-186）。
+    fn extract_icon_resource(file: &str, index: i32) -> Option<HIcon> {
+        use windows_sys::Win32::UI::WindowsAndMessaging::PrivateExtractIconsW;
+        unsafe {
+            let mut wide: Vec<u16> = file.encode_utf16().collect();
+            wide.push(0);
+            let mut hicon: HIcon = std::ptr::null_mut();
+            let mut icon_id: u32 = 0;
+            let n = PrivateExtractIconsW(
+                wide.as_ptr(),
+                index,
+                32,
+                32,
+                &mut hicon,
+                &mut icon_id,
+                1,
+                0,
+            );
+            if n == 0 || hicon.is_null() {
                 None
+            } else {
+                Some(hicon)
             }
-        } else {
-            None
         }
     }
 
@@ -463,10 +556,10 @@ mod platform {
     mod tests {
         use super::*;
 
-        /// 验证开始菜单里的系统快捷方式能解析到真实目标文件（含 %SystemRoot% 等环境变量展开），
-        /// 这是去除系统应用图标小箭头的关键路径。
+        /// 验证开始菜单里的系统快捷方式能解析并提取出图标（含 %SystemRoot% 等环境变量
+        /// 展开、IconLocation、PIDL 三条路径），这是去除系统应用图标小箭头的关键。
         #[test]
-        fn resolve_system_shortcut_target() {
+        fn resolve_system_shortcut_icon() {
             let apps = crate::app_launcher::scan_cached();
             let mut checked = 0;
             let mut resolved = 0;
@@ -476,24 +569,49 @@ mod platform {
                     continue;
                 }
                 checked += 1;
-                if let Some(t) = resolve_lnk_target(&a.path) {
-                    assert!(
-                        !t.eq_ignore_ascii_case(&a.path),
-                        "解析到的目标不应是 .lnk 本身: {}",
-                        a.path
-                    );
-                    assert!(std::path::Path::new(&t).exists(), "目标文件应存在: {}", t);
+                if let Some(hicon) = resolve_lnk(&a.path) {
+                    assert!(!hicon.is_null(), "解析得到的 HIcon 不应为空");
+                    unsafe {
+                        DestroyIcon(hicon);
+                    }
                     resolved += 1;
                 }
                 if checked >= 8 {
                     break;
                 }
             }
-            println!("[icon test] 系统快捷方式目标解析: 检查 {} 个, 成功 {}", checked, resolved);
+            println!("[icon test] 系统快捷方式图标解析: 检查 {} 个, 成功 {}", checked, resolved);
             assert!(
                 resolved > 0 || checked == 0,
-                "应至少有一个系统快捷方式能解析到真实目标（验证环境变量展开生效）"
+                "应至少有一个系统快捷方式能解析出图标（验证去箭头路径生效）"
             );
+        }
+
+        /// 文件资源管理器（PIDL 快捷方式）必须能解析出图标——这是本次修复的核心。
+        #[test]
+        fn resolve_file_explorer_icon() {
+            let apps = crate::app_launcher::scan_cached();
+            let mut found = false;
+            for a in apps.iter() {
+                let blob = format!("{} {}", a.name, a.path).to_ascii_lowercase();
+                if blob.contains("explor") || blob.contains("资源管理器") {
+                    found = true;
+                    let hicon = resolve_lnk(&a.path);
+                    assert!(
+                        hicon.is_some(),
+                        "文件资源管理器应能解析出图标: {}",
+                        a.path
+                    );
+                    if let Some(h) = hicon {
+                        unsafe {
+                            DestroyIcon(h);
+                        }
+                    }
+                }
+            }
+            if !found {
+                println!("[icon test] 未找到文件资源管理器快捷方式，跳过（非中文/英文系统开始菜单可能不含）");
+            }
         }
     }
 }
