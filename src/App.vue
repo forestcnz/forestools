@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from "vue";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window";
 import {
   scanApps,
   indexApps,
@@ -19,17 +19,18 @@ const inputRef = ref<HTMLInputElement>();
 const selectedIndex = ref(0);
 let dragStartX = 0;
 let dragStartY = 0;
+let windowWidth = 480; // 启动时按屏幕 2/5 重算
 
 const allApps = ref<IndexedApp[]>([]);
 const matches = computed(() => search(allApps.value, searchQuery.value));
 const results = computed(() => matches.value.map((m) => m.app));
 
-/** 根据结果数量调整窗口高度。 */
+/** 根据结果数量调整窗口高度（宽度固定，由启动时按屏幕比例确定）。 */
 async function fitWindow() {
   const count = results.value.length;
   const height = count === 0 ? BASE_HEIGHT : BASE_HEIGHT + 8 + Math.min(count, MAX_ITEMS) * ITEM_HEIGHT;
   try {
-    await getCurrentWindow().setSize(new LogicalSize(480, height));
+    await getCurrentWindow().setSize(new LogicalSize(windowWidth, height));
   } catch {
     // 忽略尺寸调整失败
   }
@@ -112,6 +113,17 @@ onMounted(async () => {
 
   await nextTick();
   inputRef.value?.focus();
+
+  // 按当前屏幕宽度的 2/5 设置窗口宽度
+  try {
+    const monitor = await currentMonitor();
+    if (monitor) {
+      const screenWidthLogical = monitor.size.width / monitor.scaleFactor;
+      windowWidth = Math.round(screenWidthLogical * 2 / 5);
+    }
+  } catch {
+    // 取不到显示器信息则沿用默认宽度
+  }
   fitWindow();
 
   // 后台加载应用列表（不阻塞 UI）
@@ -131,7 +143,7 @@ onMounted(async () => {
         v-model="searchQuery"
         type="text"
         class="search-input"
-        placeholder="搜索应用…"
+        placeholder="神奇的海螺"
         spellcheck="false"
         @keydown="onKeyDown"
       />
@@ -193,11 +205,10 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.28);
 }
 
 .search-bar {
@@ -227,6 +238,11 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 0 8px 8px;
+  scrollbar-width: none;
+}
+
+.result-list::-webkit-scrollbar {
+  display: none;
 }
 
 .result-item {
@@ -280,7 +296,8 @@ body {
   }
 
   .container {
-    background-color: rgba(40, 40, 42, 0.92);
+    background-color: rgb(40, 40, 42);
+    border-color: rgba(255, 255, 255, 0.12);
   }
 
   .result-item.selected {
