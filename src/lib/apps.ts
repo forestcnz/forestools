@@ -7,6 +7,19 @@ export interface AppInfo {
   aliases?: string[];
 }
 
+/** 内置应用类型（非系统扫描出来的真实可执行文件）。 */
+export type BuiltinKind = "timestamp";
+
+/** 内置应用清单：参与正常搜索索引，选中后由前端展开对应功能面板。 */
+export const BUILTIN_APPS: (AppInfo & { kind: BuiltinKind })[] = [
+  {
+    kind: "timestamp",
+    name: "时间戳转换",
+    path: "builtin:timestamp",
+    aliases: ["时间戳", "timestamp", "ts", "sjc"],
+  },
+];
+
 interface ScanResult {
   apps: AppInfo[];
 }
@@ -43,6 +56,8 @@ interface IndexedName {
 export interface IndexedApp extends AppInfo {
   /** names[0] 为主名称，其后为别名。 */
   names: IndexedName[];
+  /** 内置应用类型；undefined 表示外部扫描到的真实应用。 */
+  kind?: BuiltinKind;
 }
 
 const pinyinOpts = { toneType: "none", type: "array", nonZh: "consecutive" } as const;

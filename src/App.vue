@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window";
 import {
   scanApps,
@@ -7,8 +7,17 @@ import {
   search,
   openApp,
   iconUrl,
+  BUILTIN_APPS,
   type IndexedApp,
 } from "./lib/apps";
+import TimestampPanel from "./components/TimestampPanel.vue";
+
+/** 内置「时间戳转换」应用结果列表中的图标（时钟 SVG，主题色描边）。 */
+const TIMESTAMP_ICON =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#0071e3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  );
 
 const BASE_HEIGHT = 56; // 搜索栏高度（逻辑像素）
 const ITEM_HEIGHT = 44; // 单条结果高度
@@ -25,10 +34,24 @@ const allApps = ref<IndexedApp[]>([]);
 const matches = computed(() => search(allApps.value, searchQuery.value));
 const results = computed(() => matches.value.map((m) => m.app));
 
+const tsPanelRef = ref<InstanceType<typeof TimestampPanel>>();
+const tsView = ref<HTMLElement>();
+
+type View = "search" | "timestamp";
+const view = ref<View>("search");
+
 /** 根据结果数量调整窗口高度（宽度固定，由启动时按屏幕比例确定）。 */
 async function fitWindow() {
-  const count = results.value.length;
-  const height = count === 0 ? BASE_HEIGHT : BASE_HEIGHT + 8 + Math.min(count, MAX_ITEMS) * ITEM_HEIGHT;
+  await nextTick();
+  let height = BASE_HEIGHT;
+  if (view.value === "timestamp" && tsView.value) {
+    height = tsView.value.offsetHeight + 2;
+  } else {
+    const count = results.value.length;
+    if (count > 0) {
+      height = BASE_HEIGHT + 8 + Math.min(count, MAX_ITEMS) * ITEM_HEIGHT;
+    }
+  }
   try {
     await getCurrentWindow().setSize(new LogicalSize(windowWidth, height));
   } catch {
@@ -36,12 +59,21 @@ async function fitWindow() {
   }
 }
 
-watch(results, () => {
+watch([view, results], () => {
   selectedIndex.value = 0;
   fitWindow();
 });
 
 async function launch(app: IndexedApp) {
+  if (app.kind === "timestamp") {
+    // 内置功能：切换到时间戳转换独立页面，清空查询并把焦点交给面板。
+    view.value = "timestamp";
+    searchQuery.value = "";
+    await nextTick();
+    tsPanelRef.value?.focusFirst(true);
+    fitWindow();
+    return;
+  }
   try {
     await openApp(app.path);
   } catch (e) {
@@ -52,10 +84,6 @@ async function launch(app: IndexedApp) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === "Escape") {
-    getCurrentWindow().hide();
-    return;
-  }
   if (results.value.length === 0) return;
 
   if (e.key === "ArrowDown") {
@@ -71,6 +99,22 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     const app = results.value[selectedIndex.value];
     if (app) launch(app);
+  }
+}
+
+/** 退出时间戳页面，回到搜索。 */
+function backToSearch() {
+  view.value = "search";
+  searchQuery.value = "";
+  nextTick(() => inputRef.value?.focus());
+  fitWindow();
+}
+
+/** 全局 Esc：时间戳页面下返回搜索；搜索页面下隐藏窗口。 */
+function onGlobalKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    if (view.value === "timestamp") backToSearch();
+    else getCurrentWindow().hide();
   }
 }
 
@@ -105,10 +149,14 @@ function onMouseDown(e: MouseEvent) {
 }
 
 onMounted(async () => {
+  window.addEventListener("keydown", onGlobalKeyDown);
+
   // 窗口获得焦点时聚焦输入框
   const win = getCurrentWindow();
   win.onFocusChanged(({ payload: focused }) => {
-    if (focused) inputRef.value?.focus();
+    if (!focused) return;
+    if (view.value === "timestamp") tsPanelRef.value?.focusFirst();
+    else inputRef.value?.focus();
   });
 
   await nextTick();
@@ -126,49 +174,66 @@ onMounted(async () => {
   }
   fitWindow();
 
-  // 后台加载应用列表（不阻塞 UI）
+  // 后台加载应用列表（不阻塞 UI），内置应用置顶参与索引
   scanApps()
     .then((apps) => {
-      allApps.value = indexApps(apps);
+      allApps.value = indexApps([...BUILTIN_APPS, ...apps]);
     })
     .catch((e) => console.error("扫描应用失败:", e));
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onGlobalKeyDown);
 });
 </script>
 
 <template>
   <main class="container">
-    <div class="search-bar" @mousedown="onMouseDown">
-      <input
-        ref="inputRef"
-        v-model="searchQuery"
-        type="text"
-        class="search-input"
-        placeholder="神奇的海螺"
-        spellcheck="false"
-        @keydown="onKeyDown"
-      />
-    </div>
-    <div v-if="results.length" class="result-list">
-      <div
-        v-for="(app, index) in results.slice(0, MAX_ITEMS)"
-        :key="app.path"
-        class="result-item"
-        :class="{ selected: index === selectedIndex }"
-        @mousemove="selectedIndex = index"
-        @click="launch(app)"
-      >
-        <img
-          class="result-icon"
-          :src="iconUrl(app.path)"
-          alt=""
-          draggable="false"
-          @error="(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')"
+    <template v-if="view === 'search'">
+      <div class="search-bar" @mousedown="onMouseDown">
+        <input
+          ref="inputRef"
+          v-model="searchQuery"
+          type="text"
+          class="search-input"
+          placeholder="神奇的海螺"
+          spellcheck="false"
+          @keydown="onKeyDown"
         />
-        <div class="result-text">
-          <div class="result-name">{{ app.name }}</div>
-          <div class="result-path">{{ app.path }}</div>
+      </div>
+      <div v-if="results.length" class="result-list">
+        <div
+          v-for="(app, index) in results.slice(0, MAX_ITEMS)"
+          :key="app.path"
+          class="result-item"
+          :class="{ selected: index === selectedIndex }"
+          @mousemove="selectedIndex = index"
+          @click="launch(app)"
+        >
+          <img
+            v-if="app.kind === 'timestamp'"
+            class="result-icon"
+            :src="TIMESTAMP_ICON"
+            alt=""
+            draggable="false"
+          />
+          <img
+            v-else
+            class="result-icon"
+            :src="iconUrl(app.path)"
+            alt=""
+            draggable="false"
+            @error="(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')"
+          />
+          <div class="result-text">
+            <div class="result-name">{{ app.name }}</div>
+            <div class="result-path">{{ app.path }}</div>
+          </div>
         </div>
       </div>
+    </template>
+    <div v-else ref="tsView" class="ts-view">
+      <TimestampPanel ref="tsPanelRef" @back="backToSearch" @drag="onMouseDown" />
     </div>
   </main>
 </template>
@@ -232,6 +297,16 @@ body {
 
 .search-input::placeholder {
   color: #999;
+}
+
+.ts-view {
+  flex-shrink: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ts-view::-webkit-scrollbar {
+  display: none;
 }
 
 .result-list {
