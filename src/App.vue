@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import {
   scanApps,
   indexApps,
@@ -36,9 +38,18 @@ const results = computed(() => matches.value.map((m) => m.app));
 
 const tsPanelRef = ref<InstanceType<typeof TimestampPanel>>();
 const tsView = ref<HTMLElement>();
+let unlistenShow: (() => void) | undefined;
+let unlistenAltSpace: (() => void) | undefined;
 
 type View = "search" | "timestamp";
-const view = ref<View>("search");
+
+const EMBEDDED_PARAMS = new URLSearchParams(window.location.search);
+const isEmbedded = EMBEDDED_PARAMS.get("view") === "timestamp";
+if (isEmbedded) {
+  const w = EMBEDDED_PARAMS.get("w");
+  if (w) windowWidth = parseInt(w) || windowWidth;
+}
+const view = ref<View>(isEmbedded ? "timestamp" : "search");
 
 /** 根据结果数量调整窗口高度（宽度固定，由启动时按屏幕比例确定）。 */
 async function fitWindow() {
@@ -66,12 +77,24 @@ watch([view, results], () => {
 
 async function launch(app: IndexedApp) {
   if (app.kind === "timestamp") {
-    // 内置功能：切换到时间戳转换独立页面，清空查询并把焦点交给面板。
-    view.value = "timestamp";
     searchQuery.value = "";
-    await nextTick();
-    tsPanelRef.value?.focusFirst(true);
-    fitWindow();
+    const win = getCurrentWindow();
+    const pos = await win.outerPosition();
+    const size = await win.outerSize();
+    const scaleFactor = size.width / windowWidth;
+    new WebviewWindow(`timestamp-${Date.now()}`, {
+      url: `/?view=timestamp&w=${windowWidth}`,
+      title: "时间戳转换",
+      x: Math.round(pos.x / scaleFactor),
+      y: Math.round(pos.y / scaleFactor),
+      width: windowWidth,
+      height: BASE_HEIGHT,
+      decorations: false,
+      transparent: true,
+      resizable: false,
+      visible: false,
+    });
+    await win.hide();
     return;
   }
   try {
@@ -102,12 +125,20 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-/** 退出时间戳页面，回到搜索。 */
+/** 退出时间戳页面，回到搜索。时间戳独立窗口中则关闭窗口。 */
 function backToSearch() {
+  if (isEmbedded) {
+    getCurrentWindow().close();
+    return;
+  }
   view.value = "search";
   searchQuery.value = "";
   nextTick(() => inputRef.value?.focus());
   fitWindow();
+}
+
+function onEmbeddedKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape") getCurrentWindow().close();
 }
 
 /** 全局 Esc：时间戳页面下返回搜索；搜索页面下隐藏窗口。 */
@@ -149,15 +180,39 @@ function onMouseDown(e: MouseEvent) {
 }
 
 onMounted(async () => {
+  const win = getCurrentWindow();
+
+  if (isEmbedded) {
+    window.addEventListener("keydown", onEmbeddedKeyDown);
+    win.onFocusChanged(({ payload: focused }) => {
+      if (focused) tsPanelRef.value?.focusFirst();
+    });
+    await nextTick();
+    tsPanelRef.value?.focusFirst(true);
+    await fitWindow();
+    await win.show();
+    await win.setFocus();
+    return;
+  }
+
+  // ── 以下为主搜索窗口的初始化 ──
   window.addEventListener("keydown", onGlobalKeyDown);
 
-  // 窗口获得焦点时聚焦输入框
-  const win = getCurrentWindow();
   win.onFocusChanged(({ payload: focused }) => {
     if (!focused) return;
-    if (view.value === "timestamp") tsPanelRef.value?.focusFirst();
-    else inputRef.value?.focus();
+    inputRef.value?.focus();
   });
+
+  // 窗口每次从隐藏状态显示时（比如 Alt+Space 唤起），重置回搜索页面
+  listen("window-shown", () => {
+    view.value = "search";
+    searchQuery.value = "";
+  }).then((fn) => { unlistenShow = fn; });
+
+  // 窗口可见时按 Alt+Space：隐藏搜索窗口
+  listen("alt-space-pressed", () => {
+    getCurrentWindow().hide();
+  }).then((fn) => { unlistenAltSpace = fn; });
 
   await nextTick();
   inputRef.value?.focus();
@@ -184,6 +239,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onGlobalKeyDown);
+  window.removeEventListener("keydown", onEmbeddedKeyDown);
+  unlistenShow?.();
+  unlistenAltSpace?.();
 });
 </script>
 

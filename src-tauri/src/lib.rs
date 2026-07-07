@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
@@ -174,7 +174,7 @@ pub fn run() {
                                     if let Ok(pos) = window.outer_position() {
                                         save_position(app_handle, pos.x, pos.y);
                                     }
-                                    let _ = window.hide();
+                                    let _ = window.emit("alt-space-pressed", ());
                                 } else {
                                     let restored = if let Some(pos) = load_position(app_handle) {
                                         if is_position_on_screen(&window, pos.x, pos.y) {
@@ -193,6 +193,7 @@ pub fn run() {
                                     }
                                     let _ = window.show();
                                     let _ = window.set_focus();
+                                    let _ = window.emit("window-shown", ());
                                 }
                             }
                         }
