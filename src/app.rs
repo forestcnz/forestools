@@ -97,10 +97,12 @@ impl App {
             eprintln!("warning: failed to register Alt+Space: {e}");
         }
 
-        // ── 系统托盘（"退出"菜单）──
+        // ── 系统托盘（"显示" + "退出"菜单）──
+        let show_item = MenuItem::new("显示", true, None);
         let quit_item = MenuItem::new("退出", true, None);
+        let show_id = show_item.id().clone();
         let quit_id = quit_item.id().clone();
-        let tray = build_tray(quit_item);
+        let tray = build_tray(show_item, quit_item);
 
         // ── 后台事件线程：接收快捷键/托盘事件，直接用 Win32 控制窗口显隐 ──
         // 不走 egui ViewportCommand::Visible：隐藏窗口后 egui update 会停止，
@@ -109,6 +111,7 @@ impl App {
         let just_shown2 = just_shown.clone();
         let ctx2 = ctx.clone();
         let quit_id2 = quit_id.clone();
+        let show_id2 = show_id.clone();
         std::thread::spawn(move || loop {
             while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
                 if ev.state == HotKeyState::Pressed {
@@ -121,9 +124,16 @@ impl App {
                     }
                 }
             }
-            // 托盘菜单（退出）：直接保存位置并退出进程
+            // 托盘菜单事件
             while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                if ev.id == show_id2 {
+                    // "显示"：唤起窗口（与快捷键一致）
+                    window_ctl::show_main_window();
+                    just_shown2.store(true, Ordering::SeqCst);
+                    ctx2.request_repaint();
+                }
                 if ev.id == quit_id2 {
+                    // "退出"：保存位置并退出进程
                     window_ctl::save_current_position();
                     std::process::exit(0);
                 }
@@ -494,16 +504,15 @@ fn configure_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-/// 构建系统托盘（"退出"菜单项）。
-fn build_tray(quit_item: MenuItem) -> Option<TrayIcon> {
+/// 构建系统托盘（"显示" + "退出"菜单项）。
+fn build_tray(show_item: MenuItem, quit_item: MenuItem) -> Option<TrayIcon> {
     let menu = Menu::new();
-    if menu.append(&quit_item).is_err() {
-        return None;
-    }
+    let _ = menu.append(&show_item);
+    let _ = menu.append(&quit_item);
     let icon = load_tray_icon();
     TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("forestools")
+        .with_tooltip(window_ctl::WINDOW_TITLE)
         .with_icon(icon)
         .build()
         .ok()

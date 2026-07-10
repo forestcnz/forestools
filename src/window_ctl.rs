@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// 主搜索窗口的 Win32 标题（供 FindWindowW 定位），需与 main.rs 中 NativeOptions 标题一致。
-pub const WINDOW_TITLE: &str = "forestools-launcher";
+pub const WINDOW_TITLE: &str = "神奇的海螺";
 
 #[derive(Serialize, Deserialize)]
 pub struct WindowPosition {
