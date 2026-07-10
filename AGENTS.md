@@ -7,14 +7,8 @@
 - **禁止 AI 启动/运行程序**（包括 `cargo run`、直接运行 exe 等）。改完代码做类型检查（`cargo check`）或测试（`cargo test`）即可，运行 GUI 交由用户。
 - 无前端工具链；仓库是单一 Cargo 包（根目录 `Cargo.toml`）。
 - **`cargo build` 若报 `failed to remove forestools.exe (os error 5)`**：旧进程还在跑，先 `taskkill /F /IM forestools.exe` 再编译。
-
-## 网络 / 代理
-
-- git local 代理已配（`.git/config` → `http://127.0.0.1:7890`，Clash）。
-- **cargo 不走 git 代理**，须单独设环境变量，否则下载依赖报 `Failed to connect to index.crates.io port 443`：
-  ```powershell
-  $env:HTTP_PROXY="http://127.0.0.1:7890"; $env:HTTPS_PROXY="http://127.0.0.1:7890"
-  ```
+- **`src/` 下只允许 `main.rs` 一个 `.rs` 文件**；其余代码全部在同名目录的 `mod.rs` + 子文件中。`mod.rs` 只写 `mod` 声明 + `pub use`，不放业务逻辑。
+- 目录名禁止下划线（用 `launcher` 不用 `app_launcher`，用 `window` 不用 `window_ctl`）。
 
 ## 开发命令
 
@@ -25,6 +19,20 @@
 | 测试 | `cargo test` | 含图标回归测试，依赖真实开始菜单/应用存在 |
 | 运行 | `cargo run` | 启动 GUI，**AI 禁止执行** |
 
+## 模块结构
+
+```
+src/
+  main.rs              入口：eframe::run_native + ViewportBuilder + with_position
+  app/                 eframe::App：状态、update 编排、UI、拖动、托盘、字体
+  search/              拼音索引 + 打分（pinyin crate，打分阈值不可改）
+  launcher/            应用扫描（.lnk，带缓存）+ 启动（ShellExecuteW）
+  icon/                图标提取（COM vtable，三级回退去箭头）+ LRU 缓存
+  window/              Win32 窗口控制（HWND 缓存、显隐/移动/圆角裁剪）+ 位置持久化 + DPI
+  theme/               浅色/暗色颜色常量
+icons/                 图标资源（include_bytes! 嵌入）
+```
+
 ## 架构要点（大量踩坑经验，改前必读）
 
 ### 窗口显隐：Win32 ShowWindow，绝不用 egui Visible
@@ -33,7 +41,7 @@
 
 正确做法（当前实现）：
 - `ViewportBuilder::with_visible(true)` —— egui 始终认为窗口可见，`update()` 持续运行。
-- `App::new` 里调 `window_ctl::hide_main_window()`（Win32 `ShowWindow(SW_HIDE)`）实际隐藏。
+- `App::new` 里调 `window::hide_main_window()`（Win32 `ShowWindow(SW_HIDE)`）实际隐藏。
 - Alt+Space 切换走后台线程 → `show_main_window()`/`hide_main_window()`（Win32 `SW_SHOW`/`SW_HIDE`）。
 - 后台线程每 50ms 轮询 `GlobalHotKeyEvent::receiver()`；收到事件后 `ctx.request_repaint()` 唤醒 `update()`。
 
@@ -47,7 +55,7 @@
 ### 窗口拖动：手动 SetWindowPos，绝不用 StartDrag
 
 - eframe 的 `ViewportCommand::StartDrag` **不会进入系统 modal 拖动**（`update()` 不暂停），无法检测拖动结束。
-- 当前实现：pointer 按下搜索栏 → 记录鼠标屏幕坐标 + 窗口起始位置；移动时 `SetWindowPos` 实时跟随；**松手（`primary_down` 变 false）立即 `save_current_position()` 保存**。
+- 当前实现：pointer 按下搜索栏 → 记录鼠标屏幕坐标 + 窗口起始位置（`DragState` 结构体）；移动时 `SetWindowPos` 实时跟随；**松手（`primary_down` 变 false）立即 `save_current_position()` 保存**。
 
 ### 位置持久化
 
@@ -55,14 +63,19 @@
 - 保存时机：拖动松手、`hide_main_window`、托盘退出。
 - 恢复时机：`main.rs` 的 `with_position`（创建时定位）+ 首个 `update()` 的 `restore_position()`（SetWindowPos 兜底）。
 - egui 不暴露窗口位置读取，用 Win32 `FindWindowW(WINDOW_TITLE)` + `GetWindowRect`。
-- `WINDOW_TITLE`（`window_ctl.rs`）必须与 `main.rs` 的 `with_title` 一致，否则所有 Win32 窗口操作失效。
+- `WINDOW_TITLE`（`window/mod.rs`）必须与 `main.rs` 的 `with_title` 一致，否则所有 Win32 窗口操作失效。当前值为 `"神奇的海螺"`。
+- HWND 首次 `FindWindowW` 后用 `OnceLock<isize>` 缓存，窗口只创建一次不会失效。
 - `(-32000, -32000)` 哨兵值由 `is_valid_position` 过滤；`is_position_on_screen` 用 `EnumDisplayMonitors` 兜底。
+
+### 输入框聚焦
+
+窗口通过后台线程 `ShowWindow(SW_SHOW)` 显示后，OS 焦点可能未立即到位。`focus_frames: u8` 计数器在 `just_shown` 时设为 15，连续 15 帧调用 `request_focus()` 直到 OS 焦点真正到位。之前用单帧 bool 会因首帧 OS 焦点未就绪而失效。
 
 ### 图标提取（主线程禁止）
 
 - COM/GDI 提取耗时会卡 UI。双 mpsc channel（`icon_req_tx`/`icon_resp_rx`）+ 后台线程串行提取（`EXTRACT_LOCK`）。
-- `get_icon_rgba` 直出 RGBA 像素（跳过 PNG 编码），egui `ColorImage::from_rgba_unmultiplied` 零损耗上传纹理。
-- 像素 LRU 缓存 128；egui 纹理缓存在 `app.rs` 的 `HashMap<path, IconState>`。
+- `get_icon_rgba` 直出 `IconImage`（结构体，非裸元组），egui `ColorImage::from_rgba_unmultiplied` 零损耗上传纹理。
+- 像素 LRU 缓存 128（`icon/cache.rs`）；egui 纹理缓存在 `app/state.rs` 的 `HashMap<path, IconState>`。
 - `.lnk` 解析：手写 COM vtable（IShellLinkW/IPersistFile）→ IconLocation/GetPath/PIDL 三级回退，避免小箭头。改图标逻辑务必跑 `cargo test`（含 `resolve_file_explorer_icon` 回归）。
 
 ### 搜索（Rust 移植自原 apps.ts）
@@ -72,7 +85,7 @@
 
 ### 字体
 
-egui 默认字体不含中文（显示豆腐块）。`configure_fonts`（`app.rs`）启动时加载 `C:\Windows\Fonts\msyh.ttc`。
+egui 默认字体不含中文（显示豆腐块）。`fonts::configure`（`app/fonts.rs`）启动时加载 `C:\Windows\Fonts\msyh.ttc`。
 
 ### 三个后台线程
 
@@ -81,22 +94,3 @@ egui 默认字体不含中文（显示豆腐块）。`configure_fonts`（`app.rs
 3. 应用扫描 + `index_apps`（启动一次）。
 
 manager/tray 必须与 eframe 事件循环同线程创建（放 `App::new`），存 `App` 字段保活（drop 即注销）。
-
-## 项目结构
-
-```
-src/
-  main.rs           入口：eframe::run_native + ViewportBuilder + with_position
-  app.rs            eframe::App：UI、事件循环、手动拖动、图标纹理缓存、3 个后台线程
-  search.rs         拼音索引 + 打分（pinyin crate）
-  app_launcher.rs   应用扫描（带缓存）+ 启动
-  icon.rs           图标提取（COM vtable）+ get_icon_rgba（LRU + 串行锁）
-  window_ctl.rs     Win32 窗口控制（ShowWindow/SetWindowPos/SetWindowRgn/FindWindowW）+ 位置持久化
-  theme.rs          浅色/暗色颜色常量
-icons/              图标资源（include_bytes! 嵌入）
-```
-
-## 已知遗留
-
-- `README.md` 仍为 Tauri+Vue 模板内容，已过时。
-- release profile：`lto=true`、`codegen-units=1`、`panic=abort`、`strip=true`。
