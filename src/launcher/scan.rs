@@ -1,18 +1,10 @@
-//! 应用扫描与启动。
+//! 应用扫描（带缓存）。Windows 扫描开始菜单与桌面 `.lnk`，macOS 扫描 `/Applications`。
 
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppInfo {
-    pub name: String,
-    pub path: String,
-    /// 搜索别名（如英文 .lnk 文件名），让中英文名称都可被搜索。
-    #[serde(default)]
-    pub aliases: Vec<String>,
-}
+use super::model::AppInfo;
 
 /// 扫描结果缓存（首次扫描后驻留，避免每次唤起都重扫）。
 static CACHE: LazyLock<Mutex<Option<Vec<AppInfo>>>> = LazyLock::new(|| Mutex::new(None));
@@ -36,7 +28,7 @@ fn should_skip(name: &str) -> bool {
     PATTERNS.iter().any(|p| lower.contains(p))
 }
 
-/// 扫描已安装应用（带缓存）。Windows 扫描开始菜单与桌面 `.lnk`，macOS 扫描 `/Applications`。
+/// 扫描已安装应用（带缓存）。
 pub fn scan_cached() -> Vec<AppInfo> {
     {
         if let Ok(guard) = CACHE.lock() {
@@ -211,41 +203,6 @@ fn scan_inner() -> Vec<AppInfo> {
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn scan_inner() -> Vec<AppInfo> {
     Vec::new()
-}
-
-/// 启动应用。
-#[cfg(target_os = "windows")]
-pub fn open(path: &str) -> Result<(), String> {
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    unsafe {
-        let verb: Vec<u16> = "open\0".encode_utf16().collect();
-        let mut file: Vec<u16> = path.encode_utf16().collect();
-        file.push(0);
-        // ShellExecuteW 返回 HINSTANCE (>32 视为成功)
-        let ret = ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            file.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL as i32,
-        );
-        if ret as usize > 32 {
-            Ok(())
-        } else {
-            Err(format!("ShellExecuteW failed (code {})", ret as isize))
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn open(path: &str) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(all(test, target_os = "windows"))]

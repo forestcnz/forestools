@@ -1,122 +1,12 @@
-//! 应用图标提取。
+//! 平台特定的图标提取实现。
 //!
-//! 设计参考原 Tauri 版的"路径即图标 + 内存 LRU + 串行提取"方案：
-//! - 图标数据不落盘，只驻留主进程内存的 LRU Map（上限 128）。
-//! - 提取走串行锁，规避原生 API 在高并发下的潜在问题。
-//! - 对外提供 `get_icon_rgba`（直接产出 RGBA 像素，供 egui `ColorImage` 零损耗上传）；
-//!   另保留 `get_icon`（PNG 编码，仅供测试校验 PNG 魔数）。
-
-use std::collections::{HashMap, VecDeque};
-use std::sync::{LazyLock, Mutex};
-
-/// LRU 容量上限。
-const MAX_ICON_CACHE: usize = 128;
-
-/// 缓存的图标像素：(width, height, RGBA bytes)。
-type IconPixels = (u32, u32, Vec<u8>);
-
-/// 全局 LRU 缓存：应用原始路径 → RGBA 像素。
-static CACHE: LazyLock<Mutex<LruCache>> = LazyLock::new(|| Mutex::new(LruCache::new(MAX_ICON_CACHE)));
-
-/// 串行提取锁：保证同一时刻只有一个原生提取任务在执行。
-static EXTRACT_LOCK: Mutex<()> = Mutex::new(());
-
-/// 简单的 LRU 缓存。利用 VecDeque 维护访问顺序，HashMap 存放数据。
-struct LruCache {
-    map: HashMap<String, IconPixels>,
-    order: VecDeque<String>,
-    cap: usize,
-}
-
-impl LruCache {
-    fn new(cap: usize) -> Self {
-        Self {
-            map: HashMap::new(),
-            order: VecDeque::new(),
-            cap,
-        }
-    }
-
-    /// 命中时刷新顺序后返回克隆（像素体积不大，克隆可接受，避免持有锁跨提取）。
-    fn get(&mut self, key: &str) -> Option<IconPixels> {
-        if let Some(val) = self.map.get(key) {
-            if let Some(pos) = self.order.iter().position(|k| k == key) {
-                self.order.remove(pos);
-            }
-            self.order.push_back(key.to_string());
-            Some(val.clone())
-        } else {
-            None
-        }
-    }
-
-    fn put(&mut self, key: String, val: IconPixels) {
-        if self.map.contains_key(&key) {
-            if let Some(pos) = self.order.iter().position(|k| k == &key) {
-                self.order.remove(pos);
-            }
-            self.order.push_back(key.clone());
-            self.map.insert(key, val);
-            return;
-        }
-        if self.map.len() >= self.cap {
-            if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
-            }
-        }
-        self.map.insert(key.clone(), val);
-        self.order.push_back(key);
-    }
-}
-
-/// 对外入口：根据应用路径返回 RGBA 像素（带缓存）。
-pub fn get_icon_rgba(path: &str) -> Option<IconPixels> {
-    // 1. 快速路径：命中缓存直接返回
-    if let Some(b) = CACHE.lock().ok().and_then(|mut c| c.get(path)) {
-        return Some(b);
-    }
-
-    // 2. 串行提取
-    let _guard = EXTRACT_LOCK.lock().ok()?;
-
-    // 拿到锁后再次检查缓存（防止并发重复提取）
-    if let Some(b) = CACHE.lock().ok().and_then(|mut c| c.get(path)) {
-        return Some(b);
-    }
-
-    let pixels = extract_icon_rgba(path)?;
-
-    if let Ok(mut c) = CACHE.lock() {
-        c.put(path.to_string(), pixels.clone());
-    }
-    Some(pixels)
-}
-
-/// 对外入口（PNG 版）：仅供测试校验 PNG 魔数使用。
-#[cfg(test)]
-pub fn get_icon(path: &str) -> Option<Vec<u8>> {
-    let (w, h, rgba) = get_icon_rgba(path)?;
-    encode_png(w, h, &rgba)
-}
-
-/// RGBA → PNG 编码（平台无关，仅测试用）。
-#[cfg(test)]
-fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut out, w, h);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().ok()?;
-        writer.write_image_data(rgba).ok()?;
-    }
-    Some(out)
-}
-
-// ───────────────────────────── 平台实现 ─────────────────────────────
+//! Windows：通过 SHGetFileInfoW + COM vtable（IShellLinkW/IPersistFile）提取 .lnk 图标，
+//! 三级回退（IconLocation → GetPath → PIDL）避免小箭头。
+//! 非 Windows：暂未实现，返回 None。
 
 #[cfg(target_os = "windows")]
-mod platform {
+mod win {
+    use crate::icon::IconImage;
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
     use windows_sys::Win32::Graphics::Gdi::{
@@ -136,7 +26,7 @@ mod platform {
     type HIcon = *mut c_void;
 
     /// 提取应用图标并返回 RGBA 像素。失败返回 None。
-    pub fn extract_icon_rgba(path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    pub fn extract_icon_rgba(path: &str) -> Option<IconImage> {
         // 对 .lnk 快捷方式：在干净 STA 线程上按 IconLocation / 目标 / PIDL 解析并提取图标，
         // 均失败时回退到 .lnk 本身。前三者都不带 Windows 快捷方式小箭头。
         let is_lnk = path.to_ascii_lowercase().ends_with(".lnk");
@@ -174,7 +64,7 @@ mod platform {
         }
     }
 
-    unsafe fn hicon_to_rgba(hicon: HIcon) -> Option<(u32, u32, Vec<u8>)> {
+    unsafe fn hicon_to_rgba(hicon: HIcon) -> Option<IconImage> {
         let mut info: ICONINFO = zeroed();
         if GetIconInfo(hicon, &mut info) == 0 {
             return None;
@@ -298,7 +188,7 @@ mod platform {
             }
         }
 
-        Some((w as u32, h as u32, rgba))
+        Some(IconImage { width: w as u32, height: h as u32, rgba })
     }
 
     unsafe fn cleanup_bitmaps(color: *mut c_void, mask: *mut c_void) {
@@ -573,7 +463,7 @@ mod platform {
         /// 展开、IconLocation、PIDL 三条路径），这是去除系统应用图标小箭头的关键。
         #[test]
         fn resolve_system_shortcut_icon() {
-            let apps = crate::app_launcher::scan_cached();
+            let apps = crate::launcher::scan_cached();
             let mut checked = 0;
             let mut resolved = 0;
             for a in apps.iter().take(200) {
@@ -603,7 +493,7 @@ mod platform {
         /// 文件资源管理器（PIDL 快捷方式）必须能解析出图标——这是本次修复的核心。
         #[test]
         fn resolve_file_explorer_icon() {
-            let apps = crate::app_launcher::scan_cached();
+            let apps = crate::launcher::scan_cached();
             let mut found = false;
             for a in apps.iter() {
                 let blob = format!("{} {}", a.name, a.path).to_ascii_lowercase();
@@ -630,14 +520,16 @@ mod platform {
 }
 
 #[cfg(not(target_os = "windows"))]
-mod platform {
+mod fallback {
+    use crate::icon::IconImage;
+
     /// 非 Windows 平台暂未实现原生图标提取，返回 None 由 UI 降级为占位图标。
-    pub fn extract_icon_rgba(_path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    pub fn extract_icon_rgba(_path: &str) -> Option<IconImage> {
         None
     }
 }
 
 #[cfg(target_os = "windows")]
-pub use platform::extract_icon_rgba;
+pub use win::extract_icon_rgba;
 #[cfg(not(target_os = "windows"))]
-pub use platform::extract_icon_rgba;
+pub use fallback::extract_icon_rgba;

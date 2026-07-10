@@ -2,22 +2,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod app_launcher;
+mod launcher;
 mod icon;
 mod search;
 mod theme;
-mod window_ctl;
+mod window;
 
 use eframe::egui;
 
 fn main() -> eframe::Result {
     // 窗口图标（嵌入 PNG，避免依赖运行时文件路径）
     let icon = load_window_icon();
-    let win_width = window_ctl::compute_window_width();
-    let saved_pos = window_ctl::load_position_logical();
+    let win_width = window::compute_window_width();
+    let saved_pos = window::load_position_logical();
 
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title(window_ctl::WINDOW_TITLE) // 供 FindWindowW 定位
+        .with_title(window::WINDOW_TITLE) // 供 FindWindowW 定位
         .with_decorations(false) // 无系统标题栏
         .with_resizable(false) // 禁止用户调整
         .with_visible(true) // egui 始终认为可见（保证 update 持续运行）；实际显隐由 Win32 ShowWindow 控制

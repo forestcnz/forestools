@@ -1228,6 +1228,7 @@ dependencies = [
  "png 0.17.16",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tray-icon",
  "windows-sys 0.59.0",
 ]
