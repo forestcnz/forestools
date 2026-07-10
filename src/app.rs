@@ -52,10 +52,14 @@ pub struct App {
     selected: usize,
     /// 窗口宽度（启动时按屏幕 2/5 计算）。
     win_width: f32,
+    /// 上次设置圆角裁剪区域的高度（仅在变化时下发 SetWindowRgn）。
+    last_region_height: f32,
+    /// 是否已恢复启动位置（首个 update 执行一次）。
+    position_restored: bool,
     /// 是否需要聚焦输入框（每次显示后置 true，绘制后清零）。
     focus_input: bool,
-    /// 窗口拖动起始位置（在搜索栏按下时记录，移动>3px 触发 StartDrag）。
-    drag_origin: Option<Pos2>,
+    /// 手动拖动状态：(鼠标按下屏幕坐标, 窗口起始位置)，均为物理像素。
+    drag: Option<((i32, i32), (i32, i32))>,
 
     /// 图标纹理缓存：应用路径 → 状态。
     icon_cache: HashMap<String, IconState>,
@@ -157,8 +161,10 @@ impl App {
             apps: Vec::new(),
             selected: 0,
             win_width,
+            last_region_height: -1.0,
+            position_restored: false,
             focus_input: false,
-            drag_origin: None,
+            drag: None,
             icon_cache: HashMap::new(),
             icon_req_tx,
             icon_resp_rx,
@@ -193,12 +199,22 @@ impl App {
 }
 
 impl eframe::App for App {
-    /// 透明窗口背景。
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+    /// 窗口背景色（不透明，配合 SetWindowRgn 圆角裁剪）。
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if visuals.dark_mode {
+            [40.0 / 255.0, 40.0 / 255.0, 42.0 / 255.0, 1.0]
+        } else {
+            [1.0, 1.0, 1.0, 1.0]
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 启动恢复位置（首个 update，窗口已完全创建，FindWindow 可靠）
+        if !self.position_restored {
+            self.position_restored = true;
+            window_ctl::restore_position();
+        }
+
         // ── 1. 应用列表加载 ──
         if let Ok(indexed) = self.apps_rx.try_recv() {
             self.apps = indexed;
@@ -266,31 +282,52 @@ impl eframe::App for App {
             should_hide = true;
         }
 
-        // 内容高度（仅用于绘制圆角背景范围；窗口物理高度固定为 MAX_WINDOW_HEIGHT，
-        // 不再动态 resize，避免 GL surface 重建导致的抖动）
+        // 内容高度（窗口物理高度固定为 MAX_WINDOW_HEIGHT，用 SetWindowRgn 裁剪可见区域到内容高度）
         let new_height = if result_count > 0 {
             BASE_HEIGHT + 8.0 + result_count.min(MAX_ITEMS) as f32 * ITEM_HEIGHT
         } else {
             BASE_HEIGHT
         };
+        // 内容高度变化时更新圆角裁剪区域（物理裁剪，无需 transparent）
+        if (new_height - self.last_region_height).abs() > 0.5 {
+            let scale = ctx.pixels_per_point();
+            window_ctl::set_window_region(self.win_width, new_height, scale);
+            self.last_region_height = new_height;
+        }
 
-        // ── 全局拖动检测：在搜索栏区域按下并移动>3px 即触发窗口拖动 ──
-        // 用全局 pointer（而非 ui.interact），这样输入框上方的拖动也能触发
-        // （ui.interact 会被前景 TextEdit 消耗 pointer，导致只有 padding 能拖动）。
-        let search_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(self.win_width, BASE_HEIGHT));
+        // ── 手动拖动：按下搜索栏 + 移动 → SetWindowPos 实时移动窗口；松手立即保存 ──
         let (pdown, ppos) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.latest_pos()));
-        if !pdown {
-            self.drag_origin = None;
-        } else if let Some(pos) = ppos {
-            if self.drag_origin.is_none() && search_rect.contains(pos) {
-                self.drag_origin = Some(pos);
-            }
-            if let Some(origin) = self.drag_origin {
-                if (pos - origin).length() > 3.0 {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                    self.drag_origin = None;
+        let scale = ctx.pixels_per_point();
+        if pdown {
+            if let Some(pos) = ppos {
+                let search_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(self.win_width, BASE_HEIGHT));
+                // 按下：记录鼠标屏幕坐标 + 窗口起始位置（仅在搜索栏区域）
+                if self.drag.is_none() && search_rect.contains(pos) {
+                    if let Some(win_pos) = window_ctl::current_window_position() {
+                        let mouse_screen = (
+                            win_pos.0 + (pos.x * scale) as i32,
+                            win_pos.1 + (pos.y * scale) as i32,
+                        );
+                        self.drag = Some((mouse_screen, win_pos));
+                    }
+                }
+                // 移动：窗口跟随鼠标位移
+                if let Some((mouse_start, win_start)) = self.drag {
+                    if let Some(win_pos) = window_ctl::current_window_position() {
+                        let mouse_screen = (
+                            win_pos.0 + (pos.x * scale) as i32,
+                            win_pos.1 + (pos.y * scale) as i32,
+                        );
+                        let new_x = win_start.0 + (mouse_screen.0 - mouse_start.0);
+                        let new_y = win_start.1 + (mouse_screen.1 - mouse_start.1);
+                        window_ctl::set_window_position(new_x, new_y);
+                    }
                 }
             }
+        } else if self.drag.is_some() {
+            // 松手：立即保存位置
+            window_ctl::save_current_position();
+            self.drag = None;
         }
 
         // ── 8. 绘制 ──
@@ -302,7 +339,7 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(Color32::TRANSPARENT)
+                    .fill(colors.bg)
                     .stroke(Stroke::NONE)
                     .inner_margin(egui::Margin::ZERO),
             )

@@ -185,6 +185,38 @@ pub fn save_current_position() {
     }
 }
 
+/// 移动窗口到指定物理坐标（不改变尺寸）。
+#[cfg(target_os = "windows")]
+pub fn set_window_position(x: i32, y: i32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    const SWP_NOSIZE: u32 = 0x0001;
+    if let Some(h) = main_hwnd() {
+        unsafe {
+            SetWindowPos(
+                h,
+                std::ptr::null_mut(),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_window_position(_x: i32, _y: i32) {}
+
+/// 恢复到上次保存的位置（离屏或无记录则不动）。
+pub fn restore_position() {
+    if let Some(pos) = load_position() {
+        if is_position_on_screen(pos.x, pos.y) {
+            set_window_position(pos.x, pos.y);
+        }
+    }
+}
+
 pub fn load_position() -> Option<WindowPosition> {
     let path = data_dir().join("position.json");
     if path.exists() {
@@ -193,6 +225,39 @@ pub fn load_position() -> Option<WindowPosition> {
     } else {
         None
     }
+}
+
+/// 系统主屏 DPI 缩放比例（96 = 100%）。
+#[cfg(target_os = "windows")]
+pub fn dpi_scale() -> f32 {
+    use windows_sys::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC};
+    const LOGPIXELSX: i32 = 88;
+    unsafe {
+        let hdc = GetDC(std::ptr::null_mut());
+        let dpi = if hdc.is_null() {
+            96
+        } else {
+            GetDeviceCaps(hdc, LOGPIXELSX)
+        };
+        ReleaseDC(std::ptr::null_mut(), hdc);
+        if dpi > 0 {
+            dpi as f32 / 96.0
+        } else {
+            1.0
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn dpi_scale() -> f32 {
+    1.0
+}
+
+/// 读取上次位置并转为逻辑坐标（供 egui `with_position` 使用）。
+pub fn load_position_logical() -> Option<(f32, f32)> {
+    let pos = load_position()?;
+    let s = dpi_scale();
+    Some((pos.x as f32 / s, pos.y as f32 / s))
 }
 
 /// 枚举所有显示器的物理像素矩形 (left, top, right, bottom)。
@@ -279,3 +344,22 @@ pub fn compute_window_width() -> f32 {
         480.0
     }
 }
+
+/// 设置窗口可见区域为圆角矩形（物理坐标）。不透明窗口下用其实现圆角裁剪，
+/// 避免 transparent 带来的 resize 抖动与初始化闪烁。
+#[cfg(target_os = "windows")]
+pub fn set_window_region(w_logical: f32, h_logical: f32, scale: f32) {
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+    if let Some(h) = main_hwnd() {
+        let w = (w_logical * scale).round() as i32;
+        let hh = (h_logical * scale).round() as i32;
+        let r = (12.0 * scale).round().max(1.0) as i32;
+        unsafe {
+            let rgn = CreateRoundRectRgn(0, 0, w + 1, hh + 1, r, r);
+            SetWindowRgn(h, rgn, 1);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_window_region(_w_logical: f32, _h_logical: f32, _scale: f32) {}
