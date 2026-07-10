@@ -10,8 +10,6 @@ use pinyin::ToPinyin;
 /// 一个可搜索名称的索引（主名称或别名都各自索引）。
 #[derive(Clone)]
 pub struct IndexedName {
-    #[allow(dead_code)]
-    pub raw: String,
     pub lower: String,
     pub pinyin_full: String,
     pub initials: String,
@@ -64,7 +62,6 @@ fn index_name(raw: &str) -> IndexedName {
         .collect::<String>()
         .to_lowercase();
     IndexedName {
-        raw: raw.to_string(),
         lower: raw.to_lowercase(),
         pinyin_full,
         initials,

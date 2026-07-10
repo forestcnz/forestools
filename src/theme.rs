@@ -14,9 +14,6 @@ pub struct ThemeColors {
     pub text: Color32,
     /// 次要文本（应用路径）。
     pub text_secondary: Color32,
-    /// 强调色（搜索框光标、聚焦等，预留）。
-    #[allow(dead_code)]
-    pub accent: Color32,
 }
 
 impl ThemeColors {
@@ -28,7 +25,6 @@ impl ThemeColors {
             selected: Color32::from_rgba_unmultiplied(0, 113, 227, 31), // ≈0.12
             text: Color32::from_rgb(0x1a, 0x1a, 0x1a),
             text_secondary: Color32::from_rgb(0x88, 0x88, 0x88),
-            accent: Color32::from_rgb(0, 113, 227),
         }
     }
 
@@ -40,7 +36,6 @@ impl ThemeColors {
             selected: Color32::from_rgba_unmultiplied(100, 168, 255, 51), // ≈0.2
             text: Color32::from_rgb(0xe5, 0xe5, 0xe7),
             text_secondary: Color32::from_rgb(0x88, 0x88, 0x88),
-            accent: Color32::from_rgb(100, 168, 255),
         }
     }
 

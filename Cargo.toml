@@ -25,11 +25,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    # Win32_Storage_FileSystem 是 Win32_UI_Shell 中 SHGetFileInfoW 的传递依赖，不可省略
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Environment",
 ] }
-# 应用图标 PNG 编码/解码（图标提取测试用）
+
+# 应用图标 PNG 编码/解码（仅测试用）
+[target.'cfg(windows)'.dev-dependencies]
 png = "0.17"
 
 # 体积优化（沿用原 Tauri release profile）
