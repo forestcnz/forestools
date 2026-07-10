@@ -1,0 +1,41 @@
+[package]
+name = "forestools"
+version = "0.1.0"
+description = "应用启动器（Alt+Space 唤起，拼音搜索并启动已安装应用）"
+edition = "2021"
+
+[dependencies]
+# GUI（即时模式，透明无边框窗口 + 圆角 + 动态高度）
+eframe = "0.29"
+# 全局快捷键（Alt+Space，Win32 RegisterHotKey）
+global-hotkey = "0.8"
+# 系统托盘（含"退出"菜单）
+tray-icon = "0.24"
+# 拼音索引（替代前端的 pinyin-pro）
+pinyin = "0.11"
+# 图像解码（托盘图标 PNG → RGBA）
+image = { version = "0.25", default-features = false, features = ["png"] }
+# 序列化（窗口位置持久化）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Environment",
+] }
+# 应用图标 PNG 编码/解码（图标提取测试用）
+png = "0.17"
+
+# 体积优化（沿用原 Tauri release profile）
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

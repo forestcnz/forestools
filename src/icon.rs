@@ -1,17 +1,21 @@
-//! 应用图标提取与 `appicon://` 自定义协议。
+//! 应用图标提取。
 //!
-//! 设计参考 ZTools 的"路径即图标 + 懒加载协议流 + 内存 LRU + 串行提取"方案：
-//! - 图标 PNG 数据不落盘，只驻留主进程内存的 LRU Map（上限 128）。
+//! 设计参考原 Tauri 版的"路径即图标 + 内存 LRU + 串行提取"方案：
+//! - 图标数据不落盘，只驻留主进程内存的 LRU Map（上限 128）。
 //! - 提取走串行锁，规避原生 API 在高并发下的潜在问题。
-//! - 前端用普通 `<img src="appicon://icon/<encodeURIComponent(应用路径)>">` 触发提取。
+//! - 对外提供 `get_icon_rgba`（直接产出 RGBA 像素，供 egui `ColorImage` 零损耗上传）；
+//!   另保留 `get_icon`（PNG 编码，仅供测试校验 PNG 魔数）。
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, Mutex};
 
-/// LRU 容量上限（与 ZTools 一致）。
+/// LRU 容量上限。
 const MAX_ICON_CACHE: usize = 128;
 
-/// 全局 LRU 缓存：应用原始路径 → PNG 字节。
+/// 缓存的图标像素：(width, height, RGBA bytes)。
+type IconPixels = (u32, u32, Vec<u8>);
+
+/// 全局 LRU 缓存：应用原始路径 → RGBA 像素。
 static CACHE: LazyLock<Mutex<LruCache>> = LazyLock::new(|| Mutex::new(LruCache::new(MAX_ICON_CACHE)));
 
 /// 串行提取锁：保证同一时刻只有一个原生提取任务在执行。
@@ -19,7 +23,7 @@ static EXTRACT_LOCK: Mutex<()> = Mutex::new(());
 
 /// 简单的 LRU 缓存。利用 VecDeque 维护访问顺序，HashMap 存放数据。
 struct LruCache {
-    map: HashMap<String, Vec<u8>>,
+    map: HashMap<String, IconPixels>,
     order: VecDeque<String>,
     cap: usize,
 }
@@ -33,8 +37,8 @@ impl LruCache {
         }
     }
 
-    /// 命中时刷新顺序后返回克隆（PNG 体积不大，克隆可接受，避免持有锁跨 await/提取）。
-    fn get(&mut self, key: &str) -> Option<Vec<u8>> {
+    /// 命中时刷新顺序后返回克隆（像素体积不大，克隆可接受，避免持有锁跨提取）。
+    fn get(&mut self, key: &str) -> Option<IconPixels> {
         if let Some(val) = self.map.get(key) {
             if let Some(pos) = self.order.iter().position(|k| k == key) {
                 self.order.remove(pos);
@@ -46,7 +50,7 @@ impl LruCache {
         }
     }
 
-    fn put(&mut self, key: String, val: Vec<u8>) {
+    fn put(&mut self, key: String, val: IconPixels) {
         if self.map.contains_key(&key) {
             if let Some(pos) = self.order.iter().position(|k| k == &key) {
                 self.order.remove(pos);
@@ -65,8 +69,8 @@ impl LruCache {
     }
 }
 
-/// 对外入口：根据应用路径返回 PNG 字节（带缓存）。
-pub fn get_icon(path: &str) -> Option<Vec<u8>> {
+/// 对外入口：根据应用路径返回 RGBA 像素（带缓存）。
+pub fn get_icon_rgba(path: &str) -> Option<IconPixels> {
     // 1. 快速路径：命中缓存直接返回
     if let Some(b) = CACHE.lock().ok().and_then(|mut c| c.get(path)) {
         return Some(b);
@@ -80,12 +84,33 @@ pub fn get_icon(path: &str) -> Option<Vec<u8>> {
         return Some(b);
     }
 
-    let png = extract_icon_png(path)?;
+    let pixels = extract_icon_rgba(path)?;
 
     if let Ok(mut c) = CACHE.lock() {
-        c.put(path.to_string(), png.clone());
+        c.put(path.to_string(), pixels.clone());
     }
-    Some(png)
+    Some(pixels)
+}
+
+/// 对外入口（PNG 版）：仅供测试校验 PNG 魔数使用。
+#[cfg(test)]
+pub fn get_icon(path: &str) -> Option<Vec<u8>> {
+    let (w, h, rgba) = get_icon_rgba(path)?;
+    encode_png(w, h, &rgba)
+}
+
+/// RGBA → PNG 编码（平台无关，仅测试用）。
+#[cfg(test)]
+fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(rgba).ok()?;
+    }
+    Some(out)
 }
 
 // ───────────────────────────── 平台实现 ─────────────────────────────
@@ -110,8 +135,8 @@ mod platform {
 
     type HIcon = *mut c_void;
 
-    /// 提取应用图标并编码为 PNG。失败返回 None。
-    pub fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
+    /// 提取应用图标并返回 RGBA 像素。失败返回 None。
+    pub fn extract_icon_rgba(path: &str) -> Option<(u32, u32, Vec<u8>)> {
         // 对 .lnk 快捷方式：在干净 STA 线程上按 IconLocation / 目标 / PIDL 解析并提取图标，
         // 均失败时回退到 .lnk 本身。前三者都不带 Windows 快捷方式小箭头。
         let is_lnk = path.to_ascii_lowercase().ends_with(".lnk");
@@ -122,9 +147,9 @@ mod platform {
                 get_hicon(path)
             };
             let hicon = hicon?;
-            let png = hicon_to_png(hicon);
+            let pixels = hicon_to_rgba(hicon);
             DestroyIcon(hicon);
-            png
+            pixels
         }
     }
 
@@ -149,7 +174,7 @@ mod platform {
         }
     }
 
-    unsafe fn hicon_to_png(hicon: HIcon) -> Option<Vec<u8>> {
+    unsafe fn hicon_to_rgba(hicon: HIcon) -> Option<(u32, u32, Vec<u8>)> {
         let mut info: ICONINFO = zeroed();
         if GetIconInfo(hicon, &mut info) == 0 {
             return None;
@@ -259,7 +284,7 @@ mod platform {
                 } else {
                     255
                 };
-                // Win32 图标位图通常为预乘 alpha，PNG 需要 straight alpha，故做反预乘。
+                // Win32 图标位图通常为预乘 alpha，PNG/RGBA 需要 straight alpha，故做反预乘。
                 if trust_alpha && a > 0 && a < 255 {
                     let inv = 255.0 / a as f32;
                     r = (r as f32 * inv).min(255.0) as u8;
@@ -273,7 +298,7 @@ mod platform {
             }
         }
 
-        encode_png(w as u32, h as u32, &rgba)
+        Some((w as u32, h as u32, rgba))
     }
 
     unsafe fn cleanup_bitmaps(color: *mut c_void, mask: *mut c_void) {
@@ -540,18 +565,6 @@ mod platform {
         }
     }
 
-    fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
-        let mut out = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut out, w, h);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().ok()?;
-            writer.write_image_data(rgba).ok()?;
-        }
-        Some(out)
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -618,26 +631,13 @@ mod platform {
 
 #[cfg(not(target_os = "windows"))]
 mod platform {
-    /// 非 Windows 平台暂未实现原生图标提取，返回 None 由前端降级为占位图标。
-    pub fn extract_icon_png(_path: &str) -> Option<Vec<u8>> {
+    /// 非 Windows 平台暂未实现原生图标提取，返回 None 由 UI 降级为占位图标。
+    pub fn extract_icon_rgba(_path: &str) -> Option<(u32, u32, Vec<u8>)> {
         None
     }
 }
 
 #[cfg(target_os = "windows")]
-pub use platform::extract_icon_png;
+pub use platform::extract_icon_rgba;
 #[cfg(not(target_os = "windows"))]
-pub use platform::extract_icon_png;
-
-use percent_encoding::percent_decode_str;
-
-/// 处理 `appicon://` 请求：解析出应用路径，返回 PNG 响应或 404。
-pub fn handle_request(path_part: &str) -> (u16, &'static str, Option<Vec<u8>>) {
-    // path_part 形如 "/C%3A%5C...bar.lnk"，去掉前导 '/'
-    let raw = path_part.trim_start_matches('/');
-    let decoded = percent_decode_str(raw).decode_utf8_lossy();
-    match get_icon(&decoded) {
-        Some(png) => (200, "image/png", Some(png)),
-        None => (404, "text/plain", None),
-    }
-}
+pub use platform::extract_icon_rgba;
