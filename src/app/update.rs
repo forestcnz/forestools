@@ -20,10 +20,15 @@ impl eframe::App for super::App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 启动恢复位置（首个 update，窗口已完全创建，FindWindow 可靠）
+        // 启动隐藏：eframe 首帧 post_rendering 会强制 set_visible(true)，
+        // 无法阻止。首帧将窗口移到屏幕外，post_rendering 显示时用户不可见；
+        // 第二帧再用 Win32 SW_HIDE 隐藏（此后 post_rendering 不再重复 show）。
         if !self.position_restored {
             self.position_restored = true;
-            window::restore_position();
+            window::set_window_position(window::PhysicalPos::new(-32000, -32000));
+        } else if self.need_initial_hide {
+            self.need_initial_hide = false;
+            window::hide_main_window();
         }
 
         // ── 1. 应用列表加载 ──

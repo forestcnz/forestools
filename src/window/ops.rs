@@ -175,15 +175,6 @@ pub fn set_window_position(pos: PhysicalPos) {
 #[cfg(not(target_os = "windows"))]
 pub fn set_window_position(_pos: PhysicalPos) {}
 
-/// 恢复到上次保存的位置（离屏或无记录则不动）。
-pub fn restore_position() {
-    if let Some(pos) = load_position() {
-        if is_position_on_screen(pos) {
-            set_window_position(pos);
-        }
-    }
-}
-
 // ──────────────────────── 圆角裁剪 ────────────────────────
 
 /// 设置窗口可见区域为圆角矩形（物理坐标）。不透明窗口下用其实现圆角裁剪，

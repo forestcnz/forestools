@@ -53,6 +53,8 @@ pub struct App {
     pub(super) last_region_height: f32,
     /// 是否已恢复启动位置（首个 update 执行一次）。
     pub(super) position_restored: bool,
+    /// 启动后需在第二帧隐藏窗口（eframe 首帧 post_rendering 会强制 show，首帧 hide 无效）。
+    pub(super) need_initial_hide: bool,
     /// 剩余需要请求输入框聚焦的帧数（窗口刚显示后多帧重试，避免 OS 焦点未到位）。
     pub(super) focus_frames: u8,
     /// 手动拖动状态。
@@ -161,8 +163,6 @@ impl App {
             win_width,
             MAX_WINDOW_HEIGHT,
         )));
-        // 启动即隐藏（用 Win32 而非 egui Visible，确保 egui update 持续运行）
-        window::hide_main_window();
 
         Self {
             query: String::new(),
@@ -171,6 +171,7 @@ impl App {
             win_width,
             last_region_height: -1.0,
             position_restored: false,
+            need_initial_hide: true,
             focus_frames: 0,
             drag: None,
             icon_cache: HashMap::new(),
