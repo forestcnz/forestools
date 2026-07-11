@@ -21,6 +21,7 @@ fn main() -> eframe::Result {
         .with_decorations(false) // 无系统标题栏
         .with_resizable(false) // 禁止用户调整
         .with_visible(true) // egui 始终认为可见（保证 update 持续运行）；实际显隐由 Win32 ShowWindow 控制
+        .with_taskbar(false) // 不在任务栏显示图标
         .with_inner_size([win_width, app::MAX_WINDOW_HEIGHT]); // 固定尺寸（消除 resize 抖动）
     if let Some((x, y)) = saved_pos {
         viewport = viewport.with_position([x, y]); // 在上次保存的位置创建
