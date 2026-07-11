@@ -195,12 +195,12 @@ impl App {
     /// 收取图标提取结果，转成纹理存入缓存。
     pub(super) fn poll_icons(&mut self, ctx: &egui::Context) {
         while let Ok((path, img)) = self.icon_resp_rx.try_recv() {
-            let handle = img.and_then(|icon| {
+            let handle = img.map(|icon| {
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [icon.width as usize, icon.height as usize],
                     &icon.rgba,
                 );
-                Some(ctx.load_texture(&path, image, egui::TextureOptions::LINEAR))
+                ctx.load_texture(&path, image, egui::TextureOptions::LINEAR)
             });
             self.icon_cache.insert(path, IconState::Ready(handle));
         }

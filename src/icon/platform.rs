@@ -114,7 +114,7 @@ mod win {
 
         // 2) 读取 1bpp 掩码位图（用于无 alpha 通道的旧式图标判定透明度）
         let mut mask: Vec<u8> = Vec::new();
-        let row_bytes = ((w + 31) / 32) * 4; // 每行字节数（DWORD 对齐）
+        let row_bytes = w.div_ceil(32) * 4; // 每行字节数（DWORD 对齐）
         let mut mask_ok = false;
         if !hbm_mask.is_null() {
             mask = vec![0u8; row_bytes * h];

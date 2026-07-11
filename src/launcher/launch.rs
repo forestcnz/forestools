@@ -18,7 +18,7 @@ pub fn open(path: &str) -> Result<(), LauncherError> {
             file.as_ptr(),
             std::ptr::null(),
             std::ptr::null(),
-            SW_SHOWNORMAL as i32,
+            SW_SHOWNORMAL,
         );
         if ret as usize > 32 {
             Ok(())
