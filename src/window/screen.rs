@@ -16,11 +16,6 @@ fn query_dpi() -> i32 {
 #[cfg(not(target_os = "windows"))]
 fn query_dpi() -> i32 { 96 }
 
-/// 主屏 DPI 缩放比例（96 = 1.0）。
-pub fn dpi_scale() -> f32 {
-    query_dpi() as f32 / 96.0
-}
-
 /// 主屏物理像素宽度。
 #[cfg(target_os = "windows")]
 fn screen_width_px() -> i32 {
@@ -32,7 +27,7 @@ fn screen_width_px() -> i32 {
 fn screen_width_px() -> i32 { 0 }
 
 /// 主屏逻辑像素宽度（物理像素按 DPI 折算）。
-pub fn primary_screen_width_logical() -> f32 {
+fn primary_screen_width_logical() -> f32 {
     let px = screen_width_px();
     if px <= 0 {
         return 480.0;

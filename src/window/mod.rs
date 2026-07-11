@@ -12,8 +12,8 @@ mod screen;
 pub const WINDOW_TITLE: &str = "神奇的海螺";
 
 pub use ops::{
-    current_window_position, hide_main_window, is_main_window_visible, load_position_logical,
-    save_current_position, set_window_position, set_window_region, show_main_window,
+    current_window_position, hide_main_window, is_main_window_visible, save_current_position,
+    set_window_position, set_window_region, show_main_window,
 };
 pub use position::PhysicalPos;
 pub use screen::compute_window_width;

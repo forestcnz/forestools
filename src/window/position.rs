@@ -15,11 +15,6 @@ impl PhysicalPos {
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
-
-    /// 转为逻辑坐标（物理像素 ÷ DPI 缩放）。
-    pub fn to_logical(self, scale: f32) -> (f32, f32) {
-        (self.x as f32 / scale, self.y as f32 / scale)
-    }
 }
 
 /// 位置数据目录：可执行文件同级 `data/`。

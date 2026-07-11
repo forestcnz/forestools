@@ -3,7 +3,6 @@
 use std::sync::OnceLock;
 
 use super::position::{PhysicalPos, is_position_on_screen, load_position, save_position};
-use super::screen::dpi_scale;
 use super::WINDOW_TITLE;
 
 // ──────────────────────── HWND 缓存 ────────────────────────
@@ -64,12 +63,6 @@ pub fn save_current_position() {
     if let Some(pos) = current_window_position() {
         save_position(pos);
     }
-}
-
-/// 读取上次位置并转为逻辑坐标（供 egui `with_position` 使用）。
-pub fn load_position_logical() -> Option<(f32, f32)> {
-    let pos = load_position()?;
-    Some(pos.to_logical(dpi_scale()))
 }
 
 // ──────────────────────── 窗口显隐 ────────────────────────
