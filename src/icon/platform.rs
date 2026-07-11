@@ -429,6 +429,80 @@ mod win {
         hicon
     }
 
+    /// 解析单个 .lnk 的目标路径（展开环境变量、校验存在性）。只调用 GetPath，
+    /// 不提取图标；用于扫描阶段获取可执行文件名作为搜索别名。
+    unsafe fn resolve_lnk_target_inner(lnk: &str) -> Option<String> {
+        let mut psl: *mut c_void = std::ptr::null_mut();
+        let hr = CoCreateInstance(
+            &ShellLink,
+            std::ptr::null_mut(),
+            CLSCTX_INPROC,
+            &IID_ISHELL_LINK_W,
+            &mut psl,
+        );
+        if hr != 0 || psl.is_null() {
+            return None;
+        }
+        let sl = psl as *const IShellLinkW;
+        let vt = (*sl).lpVtbl;
+
+        let mut ppf: *mut c_void = std::ptr::null_mut();
+        let hr = ((*vt).parent.QueryInterface)(psl, &IID_IPERSIST_FILE, &mut ppf);
+        if hr != 0 || ppf.is_null() {
+            ((*vt).parent.Release)(psl);
+            return None;
+        }
+        let pf = ppf as *const IPersistFile;
+        let pvt = (*pf).lpVtbl;
+
+        let mut wide: Vec<u16> = lnk.encode_utf16().collect();
+        wide.push(0);
+        let hr = ((*pvt).Load)(ppf, wide.as_ptr(), STGM_READ);
+
+        let target = if hr == 0 {
+            let mut buf = [0u16; 1040];
+            let mut find_data: [u8; 592] = [0; 592];
+            let hr = ((*vt).GetPath)(
+                psl,
+                buf.as_mut_ptr(),
+                buf.len() as i32,
+                find_data.as_mut_ptr() as *mut c_void,
+                SLGP_FLAGS_RAW,
+            );
+            if hr == 0 {
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                if len > 0 {
+                    let raw = String::from_utf16_lossy(&buf[..len]);
+                    validate_path(&raw)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        ((*pvt).parent.Release)(ppf);
+        ((*vt).parent.Release)(psl);
+        target
+    }
+
+    /// 批量解析多个 .lnk 的目标路径。在单个干净 STA 线程内完成（只做一次 COM 初始化），
+    /// 适合扫描阶段一次性处理开始菜单的所有快捷方式，避免逐个 spawn 线程的开销。
+    pub(crate) fn resolve_lnk_targets_batch(lnks: &[String]) -> Vec<Option<String>> {
+        let lnks: Vec<String> = lnks.to_vec();
+        let handle = std::thread::spawn(move || unsafe {
+            let _ = CoInitializeEx(std::ptr::null(), COINIT_STA as u32);
+            let results: Vec<Option<String>> =
+                lnks.iter().map(|l| resolve_lnk_target_inner(l)).collect();
+            CoUninitialize();
+            results
+        });
+        handle.join().unwrap_or_default()
+    }
+
     /// 从 exe/dll/ico 文件按索引/资源 ID 提取图标（支持负数资源 ID，如 imageres.dll,-186）。
     fn extract_icon_resource(file: &str, index: i32) -> Option<HIcon> {
         use windows_sys::Win32::UI::WindowsAndMessaging::PrivateExtractIconsW;
@@ -533,3 +607,6 @@ mod fallback {
 pub use win::extract_icon_rgba;
 #[cfg(not(target_os = "windows"))]
 pub use fallback::extract_icon_rgba;
+
+#[cfg(target_os = "windows")]
+pub(crate) use win::resolve_lnk_targets_batch;

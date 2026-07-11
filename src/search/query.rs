@@ -138,4 +138,14 @@ mod tests {
         let r = search(&apps, "control");
         assert_eq!(r.len(), 1);
     }
+
+    #[test]
+    fn exe_stem_alias_finds_cmd() {
+        // 系统应用显示名（本地化）与用户习惯的命令名脱节：解析 .lnk 目标得到 cmd.exe
+        // → 别名 "cmd"，使搜 "cmd" 能命中"命令提示符"。
+        let apps = index_apps(vec![mk("命令提示符", "p1", &["Command Prompt", "cmd"])]);
+        let r = search(&apps, "cmd");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].score, 1000);
+    }
 }

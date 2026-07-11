@@ -12,3 +12,6 @@ mod platform;
 pub use cache::{IconImage, get_icon_rgba};
 #[cfg(test)]
 pub use cache::get_icon;
+
+#[cfg(target_os = "windows")]
+pub(crate) use platform::resolve_lnk_targets_batch;

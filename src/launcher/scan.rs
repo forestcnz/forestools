@@ -45,10 +45,14 @@ pub fn scan_cached() -> Vec<AppInfo> {
 }
 
 #[cfg(target_os = "windows")]
-fn scan_inner() -> Vec<AppInfo> {
-    let mut apps: Vec<AppInfo> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+struct RawLnk {
+    path: String,
+    name: String,
+    aliases: Vec<String>,
+}
 
+#[cfg(target_os = "windows")]
+fn scan_inner() -> Vec<AppInfo> {
     let mut roots = Vec::new();
     if let Ok(program_data) = std::env::var("ProgramData") {
         roots.push(PathBuf::from(program_data).join("Microsoft/Windows/Start Menu/Programs"));
@@ -60,15 +64,43 @@ fn scan_inner() -> Vec<AppInfo> {
         roots.push(PathBuf::from(home).join("Desktop"));
     }
 
+    // 阶段 1：递归收集候选 .lnk 元数据（文件名 stem 与 Shell 显示名）。
+    let mut raws: Vec<RawLnk> = Vec::new();
     for root in &roots {
-        walk_lnks(root, &mut apps, &mut seen);
+        walk_lnks(root, &mut raws);
     }
 
+    // 阶段 2：在单个 STA 线程内批量解析 .lnk 目标路径，避免逐个 spawn 的开销。
+    let lnk_paths: Vec<String> = raws.iter().map(|r| r.path.clone()).collect();
+    let targets = crate::icon::resolve_lnk_targets_batch(&lnk_paths);
+
+    // 阶段 3：组装 AppInfo，目标可执行文件名作为搜索别名（让 "cmd" 能命中"命令提示符"）。
+    let mut apps: Vec<AppInfo> = Vec::with_capacity(raws.len());
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (raw, target) in raws.into_iter().zip(targets.into_iter()) {
+        if !seen.insert(raw.name.to_lowercase()) {
+            continue;
+        }
+        let mut aliases = raw.aliases;
+        if let Some(exe) = target.as_deref().and_then(exe_stem) {
+            let exe_l = exe.to_lowercase();
+            if exe_l != raw.name.to_lowercase()
+                && !aliases.iter().any(|a| a.to_lowercase() == exe_l)
+            {
+                aliases.push(exe);
+            }
+        }
+        apps.push(AppInfo {
+            name: raw.name,
+            path: raw.path,
+            aliases,
+        });
+    }
     apps
 }
 
 #[cfg(target_os = "windows")]
-fn walk_lnks(dir: &PathBuf, apps: &mut Vec<AppInfo>, seen: &mut std::collections::HashSet<String>) {
+fn walk_lnks(dir: &PathBuf, raws: &mut Vec<RawLnk>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -76,7 +108,7 @@ fn walk_lnks(dir: &PathBuf, apps: &mut Vec<AppInfo>, seen: &mut std::collections
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            walk_lnks(&path, apps, seen);
+            walk_lnks(&path, raws);
             continue;
         }
         let ext = path
@@ -108,16 +140,32 @@ fn walk_lnks(dir: &PathBuf, apps: &mut Vec<AppInfo>, seen: &mut std::collections
         if name.is_empty() || should_skip(&name) {
             continue;
         }
-        let key = name.to_lowercase();
-        if !seen.insert(key) {
-            continue;
-        }
-        apps.push(AppInfo {
-            name,
+        raws.push(RawLnk {
             path: path_str,
+            name,
             aliases,
         });
     }
+}
+
+/// 从 .lnk 目标路径提取可执行文件名（去扩展名），作为搜索别名。
+/// 仅保留可执行类型（.exe/.msc/.bat/.cmd），过滤过短的文件名。
+#[cfg(target_os = "windows")]
+fn exe_stem(target: &str) -> Option<String> {
+    let path = std::path::Path::new(target);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "exe" | "msc" | "bat" | "cmd") {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?.trim();
+    if stem.len() < 2 {
+        return None;
+    }
+    Some(stem.to_string())
 }
 
 /// 通过 SHGetFileInfoW(SHGFI_DISPLAYNAME) 获取 Shell 显示名（含本地化解析）。
@@ -248,5 +296,22 @@ mod tests {
         } else {
             println!("[test] 未扫描到应用（开始菜单可能为空），跳过图标校验");
         }
+    }
+
+    /// 验证 .lnk 目标解析能提取可执行文件名作为别名（端到端）：
+    /// 扫描结果中应存在别名含 "cmd" 的应用（"命令提示符"/Command Prompt → cmd.exe）。
+    #[test]
+    fn scan_extracts_exe_stem_alias() {
+        let apps = scan_cached();
+        let with_exe_alias: Vec<&str> = apps
+            .iter()
+            .filter(|a| a.aliases.iter().any(|al| al.eq_ignore_ascii_case("cmd")))
+            .map(|a| a.name.as_str())
+            .collect();
+        println!("[test] 别名含 cmd 的应用: {:?}", with_exe_alias);
+        assert!(
+            !with_exe_alias.is_empty(),
+            "应至少有一个应用的别名含 'cmd'（开始菜单的 Command Prompt.lnk → cmd.exe）"
+        );
     }
 }
